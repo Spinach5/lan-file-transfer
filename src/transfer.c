@@ -246,10 +246,16 @@ static int tcp_send_file(struct net_context *nc, const char *filepath,
     /* Read meta response */
     fprintf(stderr, "[SEND] waiting for meta response...\n");
     struct ft_meta_resp resp;
-    if (sock_read_full(fd, &resp, sizeof(resp), 10000) == 0 &&
+    memset(&resp, 0, sizeof(resp));
+    if (sock_read_full(fd, &resp, sizeof(resp), 2000) == 0 &&
         resp.magic == FT_MAGIC) {
         resume_offset = resp.resume_offset;
         fprintf(stderr, "[SEND] got meta response, resume_offset=%lu\n", (unsigned long)resume_offset);
+    } else {
+        /* No valid response — likely a scanner probe, re-accept */
+        fprintf(stderr, "[SEND] no meta response, likely scanner\n");
+        free(dir_files);
+        return -1;
     }
 
     if (resume_offset >= total && total > 0) {
