@@ -1,4 +1,9 @@
 # lanft — LAN File Transfer Tool
+[![Version](https://img.shields.io/badge/version-v1.0.0-blue.svg)](https://gitee.com/dzh258/lan-file-transfer/releases)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Gitee stars](https://gitee.com/dzh258/lan-file-transfer/badge/star.svg?theme=dark)](https://gitee.com/dzh258/lan-file-transfer)
+
+English | [中文](./README_CN.md)
 
 A fast, reliable LAN file transfer tool with both GUI (SDL2) and CLI modes. Supports TCP/UDP, directory compression, resume, device scanning, and transfer history.
 
