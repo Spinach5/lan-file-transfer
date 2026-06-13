@@ -21,9 +21,18 @@
 struct ft_meta {
     uint32_t magic;          /* FT_MAGIC */
     uint8_t  protocol;       /* FT_PROTO_TCP or FT_PROTO_UDP */
+    uint8_t  flags;          /* 0x01 = is directory */
     uint8_t  name_len;
     char     filename[FT_MAX_FILENAME];
-    uint64_t total_size;
+    uint64_t total_size;     /* file size, or total bytes for dir */
+};
+
+/* Directory entry header (after meta, before file data, for dir transfers) */
+struct ft_dirent {
+    uint16_t path_len;
+    uint8_t  is_dir;
+    uint64_t file_size;
+    /* followed by path[path_len] bytes */
 };
 
 /* Meta response: receiver → sender */
