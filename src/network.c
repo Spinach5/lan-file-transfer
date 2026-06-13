@@ -345,6 +345,11 @@ bool net_has_error(struct net_context *nc)
     return nc->error_code != 0;
 }
 
+bool net_tx_pending(struct net_context *nc)
+{
+    return nc->tx_pending;
+}
+
 void *net_get_wsi(struct net_context *nc)
 {
     return nc->wsi;

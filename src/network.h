@@ -47,6 +47,9 @@ int net_service(struct net_context *nc, int timeout_ms);
 /* Check if connected */
 bool net_is_connected(struct net_context *nc);
 
+/* Check if TX is still pending */
+bool net_tx_pending(struct net_context *nc);
+
 /* Check if an error has occurred */
 bool net_has_error(struct net_context *nc);
 

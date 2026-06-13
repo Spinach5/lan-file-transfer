@@ -1,0 +1,99 @@
+#ifndef UI_H
+#define UI_H
+
+#include <SDL2/SDL.h>
+#include <stdbool.h>
+#include <stdint.h>
+
+/* ── SDL custom event codes ────────────────────────────────── */
+#define USEREVENT_SCAN_FOUND  (SDL_USEREVENT + 1)
+#define USEREVENT_SCAN_DONE   (SDL_USEREVENT + 2)
+#define USEREVENT_PROGRESS    (SDL_USEREVENT + 3)
+#define USEREVENT_XFER_DONE   (SDL_USEREVENT + 4)
+#define USEREVENT_ERROR       (SDL_USEREVENT + 5)
+
+/* ── Color scheme (dark theme) ─────────────────────────────── */
+#define COLOR_BG        ((SDL_Color){0x1e, 0x1e, 0x2e, 255})
+#define COLOR_SURFACE   ((SDL_Color){0x31, 0x32, 0x44, 255})
+#define COLOR_TEXT      ((SDL_Color){0xcd, 0xd6, 0xf4, 255})
+#define COLOR_ACCENT    ((SDL_Color){0x89, 0xb4, 0xfa, 255})
+#define COLOR_ERROR     ((SDL_Color){0xf3, 0x8b, 0xa8, 255})
+#define COLOR_PROGRESS  ((SDL_Color){0xa6, 0xe3, 0xa1, 255})
+#define COLOR_DIM       ((SDL_Color){0x58, 0x5b, 0x70, 255})
+#define COLOR_HOVER     ((SDL_Color){0x45, 0x47, 0x5a, 255})
+
+/* ── Tab enum ──────────────────────────────────────────────── */
+enum {
+    TAB_SCAN = 0,
+    TAB_SEND,
+    TAB_RECEIVE,
+    TAB_HISTORY,
+    TAB_COUNT
+};
+
+/* ── Application state ─────────────────────────────────────── */
+
+struct app_state {
+    int current_tab;
+
+    /* Scan page */
+    char scan_status[256];
+    struct {
+        char ip[64];
+        char hostname[256];
+    } devices[256];
+    int device_count;
+    int selected_device;
+
+    /* Send page */
+    char send_filepath[1024];
+    char send_target_ip[64];
+    int  send_protocol;
+    bool send_running;
+    uint64_t send_progress_done;
+    uint64_t send_progress_total;
+
+    /* Receive page */
+    char recv_savepath[1024];
+    char recv_target_ip[64];
+    int  recv_protocol;
+    bool recv_listening;
+    bool recv_running;
+    uint64_t recv_progress_done;
+    uint64_t recv_progress_total;
+
+    /* History */
+    char history_log[4096];
+
+    /* Modal */
+    bool modal_visible;
+    char modal_message[512];
+
+    /* General */
+    char status_text[256];
+    int window_w;
+    int window_h;
+
+    /* Text input focus */
+    int active_input;  /* 0=none, 1=send path, 2=send ip, 3=recv path, 4=recv ip */
+    char input_buffer[1024];
+    int  input_cursor;
+
+    /* File browser */
+    bool file_browser_visible;
+    char file_browser_result[1024];
+    int  file_browser_target; /* 1=send path, 2=recv path */
+};
+
+/* ── UI API ────────────────────────────────────────────────── */
+
+int  ui_init(void);
+void ui_cleanup(void);
+bool ui_handle_event(SDL_Event *e, struct app_state *state);
+void ui_render(SDL_Renderer *renderer, struct app_state *state);
+void ui_draw_rect(SDL_Renderer *r, int x, int y, int w, int h, SDL_Color c);
+void ui_draw_text(SDL_Renderer *r, const char *text, int x, int y, SDL_Color c);
+void ui_text_size(const char *text, int *w, int *h);
+bool ui_in_rect(int mx, int my, int x, int y, int w, int h);
+
+#endif /* UI_H */
