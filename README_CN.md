@@ -279,3 +279,6 @@ lanft --history
 ## 许可证
 
 MIT
+
+## 星折线图
+[![Star History Chart](https://api.star-history.com/chart?repos=Spinach5/lan-file-transfer&type=date&logscale&legend=top-left)](https://www.star-history.com/?repos=Spinach5%2Flan-file-transfer&type=date&logscale=&legend=top-left)
