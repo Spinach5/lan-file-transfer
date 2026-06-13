@@ -7,6 +7,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
+#include <sys/time.h>
 #include <pthread.h>
 #include <SDL2/SDL.h>
 
@@ -185,6 +187,7 @@ int main(int argc, char **argv)
     /* Init app state */
     struct app_state state;
     memset(&state, 0, sizeof(state));
+    history_load(&state);
     state.current_tab = TAB_SCAN;
     state.selected_device = -1;
     state.active_input = 0;
@@ -263,6 +266,7 @@ int main(int argc, char **argv)
                         state.recv_progress_done = evt->bytes_done;
                         state.recv_progress_total = evt->bytes_total;
                     }
+                    state.history_pending_total = evt->bytes_total;
                     char buf[128];
                     snprintf(buf, sizeof(buf), "Transferring... %lu / %lu bytes",
                              (unsigned long)evt->bytes_done, (unsigned long)evt->bytes_total);
@@ -273,16 +277,28 @@ int main(int argc, char **argv)
             }
 
             case USEREVENT_XFER_DONE: {
-                char entry[256];
-                snprintf(entry, sizeof(entry), "%s  %lu bytes  OK\n",
-                         state.send_running ? "SENT" : "RECV",
-                         (unsigned long)(state.send_running
-                             ? state.send_progress_total : state.recv_progress_total));
-                size_t hl = strlen(state.history_log);
-                size_t el = strlen(entry);
-                if (hl + el < sizeof(state.history_log) - 1) {
-                    memmove(state.history_log + el, state.history_log, hl + 1);
-                    memcpy(state.history_log, entry, el);
+                /* Finalize history entry */
+                if (state.history_count < 256) {
+                    struct hist_entry *he = &state.history[state.history_count];
+                    struct timeval tv; gettimeofday(&tv, NULL);
+                    uint64_t end_ms = (uint64_t)tv.tv_sec * 1000 + tv.tv_usec / 1000;
+                    state.history_pending_total = state.send_running
+                        ? state.send_progress_total : state.recv_progress_total;
+
+                    strncpy(he->name, state.history_pending_name, 255);
+                    /* start_time already set at transfer start */
+                    time_t now = time(NULL);
+                    strftime(he->end_time, 32, "%H:%M:%S", localtime(&now));
+                    he->duration_ms = end_ms - state.history_pending_start_ms;
+                    he->kind = state.history_pending_kind;
+                    he->port = state.history_pending_port;
+                    he->status = 0; /* OK */
+                    he->progress = 100;
+                    if (he->duration_ms > 0 && state.history_pending_total > 0)
+                        he->speed = state.history_pending_total * 1000 / he->duration_ms;
+                    else he->speed = 0;
+                    state.history_count++;
+                    history_save(&state);
                 }
                 state.send_running = false;
                 state.recv_running = false;
@@ -311,6 +327,27 @@ int main(int argc, char **argv)
                 if (evt) {
                     strncpy(state.modal_message, evt->message, sizeof(state.modal_message) - 1);
                     state.modal_visible = true;
+                    /* Record failed history */
+                    if (state.history_count < 256) {
+                        struct hist_entry *he = &state.history[state.history_count];
+                        struct timeval tv; gettimeofday(&tv, NULL);
+                        uint64_t end_ms = (uint64_t)tv.tv_sec * 1000 + tv.tv_usec / 1000;
+                        strncpy(he->name, state.history_pending_name, 255);
+                        time_t now = time(NULL);
+                        strftime(he->end_time, 32, "%H:%M:%S", localtime(&now));
+                        he->duration_ms = (end_ms > state.history_pending_start_ms) ? end_ms - state.history_pending_start_ms : 0;
+                        he->kind = state.history_pending_kind;
+                        he->port = state.history_pending_port;
+                        he->status = 1; /* BAD */
+                        if (state.history_pending_total > 0) {
+                            uint64_t done = state.send_running ? state.send_progress_done : state.recv_progress_done;
+                            he->progress = (int)(done * 100 / state.history_pending_total);
+                            if (he->duration_ms > 0) he->speed = done * 1000 / he->duration_ms;
+                            else he->speed = 0;
+                        } else { he->progress = 0; he->speed = 0; }
+                        state.history_count++;
+                        history_save(&state);
+                    }
                     state.send_running = false;
                     state.recv_running = false;
                     pending_send = false;
@@ -333,6 +370,18 @@ int main(int argc, char **argv)
             fprintf(stderr, "[MAIN] Starting send: file=%s, target=%s, port=%d, proto=%d\n",
                     state.send_filepath, state.send_target_ip, state.send_port, state.send_protocol);
             pending_send = true;
+            /* Record history entry */
+            {
+                const char *fn = strrchr(state.send_filepath, '/');
+                strncpy(state.history_pending_name, fn ? fn + 1 : state.send_filepath, 255);
+                state.history_pending_kind = 0; /* SEND */
+                state.history_pending_port = state.send_port;
+                struct timeval tv; gettimeofday(&tv, NULL);
+                state.history_pending_start_ms = (uint64_t)tv.tv_sec * 1000 + tv.tv_usec / 1000;
+                state.history_pending_total = 0;
+                time_t now = time(NULL);
+                strftime(state.history[state.history_count].start_time, 32, "%H:%M:%S", localtime(&now));
+            }
             start_send(&state);
         }
         if (!state.send_running) pending_send = false;
@@ -341,6 +390,18 @@ int main(int argc, char **argv)
             fprintf(stderr, "[MAIN] Starting recv: save=%s, target=%s, port=%d, proto=%d\n",
                     state.recv_savepath, state.recv_target_ip, state.recv_port, state.recv_protocol);
             pending_recv = true;
+            /* Record history entry */
+            {
+                const char *fn = strrchr(state.recv_savepath, '/');
+                strncpy(state.history_pending_name, fn ? fn + 1 : state.recv_savepath, 255);
+                state.history_pending_kind = 1; /* RECV */
+                state.history_pending_port = state.recv_port;
+                struct timeval tv; gettimeofday(&tv, NULL);
+                state.history_pending_start_ms = (uint64_t)tv.tv_sec * 1000 + tv.tv_usec / 1000;
+                state.history_pending_total = 0;
+                time_t now = time(NULL);
+                strftime(state.history[state.history_count].start_time, 32, "%H:%M:%S", localtime(&now));
+            }
             start_recv(&state);
         }
         if (!state.recv_running) pending_recv = false;
@@ -349,6 +410,7 @@ int main(int argc, char **argv)
         SDL_Delay(16);
     }
 
+    history_save(&state);
     ui_cleanup();
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);

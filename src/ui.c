@@ -545,13 +545,101 @@ static void render_receive_page(SDL_Renderer *r, struct app_state *st)
     }
 }
 
+/* ── History persistence ───────────────────────────────────── */
+
+#define HISTORY_FILE "lanft_history.dat"
+
+void history_load(struct app_state *st)
+{
+    st->history_count = 0;
+    char path[512];
+    snprintf(path, sizeof(path), "%s/%s", getenv("HOME") ? getenv("HOME") : ".", "." HISTORY_FILE);
+    FILE *fp = fopen(path, "r");
+    if (!fp) return;
+
+    char line[1024];
+    while (fgets(line, sizeof(line), fp) && st->history_count < 256) {
+        struct hist_entry *r = &st->history[st->history_count];
+        unsigned long dur, spd;
+        int n = sscanf(line, "%255[^|]|%31[^|]|%31[^|]|%lu|%d|%d|%d|%d|%lu",
+                       r->name, r->start_time, r->end_time,
+                       &dur, &r->kind, &r->port,
+                       &r->status, &r->progress, &spd);
+        if (n >= 9) { r->duration_ms = dur; r->speed = spd; st->history_count++; }
+    }
+    fclose(fp);
+}
+
+void history_save(struct app_state *st)
+{
+    char path[512];
+    snprintf(path, sizeof(path), "%s/%s", getenv("HOME") ? getenv("HOME") : ".", "." HISTORY_FILE);
+    FILE *fp = fopen(path, "w");
+    if (!fp) return;
+
+    for (int i = 0; i < st->history_count; i++) {
+        struct hist_entry *r = &st->history[i];
+        fprintf(fp, "%s|%s|%s|%lu|%d|%d|%d|%d|%lu\n",
+                r->name, r->start_time[0] ? r->start_time : "-",
+                r->end_time[0] ? r->end_time : "-",
+                (unsigned long)r->duration_ms, r->kind, r->port,
+                r->status, r->progress, (unsigned long)r->speed);
+    }
+    fclose(fp);
+}
+
 /* ── History page ──────────────────────────────────────────── */
 
 static void render_history_page(SDL_Renderer *r, struct app_state *st)
 {
-    ui_draw_text(r, "Transfer History:", 20, 50, COLOR_TEXT);
-    ui_draw_rect(r, 20, 80, st->window_w - 40, st->window_h - 130, COLOR_SURFACE);
-    ui_draw_text(r, st->history_log, 30, 90, COLOR_TEXT);
+    int W = st->window_w;
+    int header_y = 50;
+    int row_h = 22;
+    static const int col_x[] = {10, 160, 280, 380, 460, 520, 580, 640, 720};
+    static const char *headers[] = {"Name","Start","End","Dur(ms)","Kind","Port","Status","%","Speed"};
+
+    /* Header row */
+    ui_draw_rect(r, 0, header_y, W, row_h, COLOR_SURFACE);
+    for (int c = 0; c < 9; c++) {
+        ui_draw_text(r, headers[c], col_x[c], header_y + 3, COLOR_ACCENT);
+    }
+    /* Separator */
+    SDL_SetRenderDrawColor(r, COLOR_DIM.r, COLOR_DIM.g, COLOR_DIM.b, COLOR_DIM.a);
+    SDL_RenderDrawLine(r, 0, header_y + row_h, W, header_y + row_h);
+
+    /* Rows */
+    int list_start = header_y + row_h + 2;
+    int max_rows = (st->window_h - list_start - 32) / row_h;
+    for (int i = 0; i < st->history_count && i < max_rows; i++) {
+        int ry = list_start + i * row_h;
+        bool even = (i % 2 == 0);
+        if (even) ui_draw_rect(r, 0, ry, W, row_h, COLOR_BG);
+
+        struct hist_entry *e = &st->history[i];
+        SDL_Color c = (e->status == 0) ? COLOR_TEXT : (e->status == 1 ? COLOR_ERROR : COLOR_DIM);
+
+        char buf[64];
+        ui_draw_text(r, e->name, col_x[0], ry + 3, c);
+        ui_draw_text(r, e->start_time, col_x[1], ry + 3, c);
+        ui_draw_text(r, e->end_time, col_x[2], ry + 3, c);
+        snprintf(buf, sizeof(buf), "%lu", (unsigned long)e->duration_ms);
+        ui_draw_text(r, buf, col_x[3], ry + 3, c);
+        ui_draw_text(r, e->kind == 0 ? "SEND" : "RECV", col_x[4], ry + 3,
+                     e->kind == 0 ? COLOR_ACCENT : COLOR_PROGRESS);
+        snprintf(buf, sizeof(buf), "%d", e->port); ui_draw_text(r, buf, col_x[5], ry + 3, c);
+        ui_draw_text(r, e->status == 0 ? "OK" : (e->status == 1 ? "BAD" : "STOP"), col_x[6], ry + 3, c);
+        snprintf(buf, sizeof(buf), "%d%%", e->progress); ui_draw_text(r, buf, col_x[7], ry + 3, c);
+        if (e->speed > 0) {
+            if (e->speed >= 1048576) snprintf(buf, sizeof(buf), "%.1fMB/s", e->speed / 1048576.0);
+            else if (e->speed >= 1024) snprintf(buf, sizeof(buf), "%luKB/s", (unsigned long)(e->speed / 1024));
+            else snprintf(buf, sizeof(buf), "%luB/s", (unsigned long)e->speed);
+        } else strncpy(buf, "-", sizeof(buf));
+        ui_draw_text(r, buf, col_x[8], ry + 3, c);
+    }
+
+    if (st->history_count == 0) {
+        ui_draw_text(r, "No transfer history yet.", 20, list_start + 10, COLOR_DIM);
+    }
 }
 
 /* ── Main render ───────────────────────────────────────────── */

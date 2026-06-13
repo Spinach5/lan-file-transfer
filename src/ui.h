@@ -67,7 +67,24 @@ struct app_state {
     uint64_t recv_progress_total;
 
     /* History */
-    char history_log[4096];
+    struct hist_entry {
+        char name[256];
+        char start_time[32];
+        char end_time[32];
+        uint64_t duration_ms;
+        int  kind;       /* 0=SEND, 1=RECV */
+        int  port;
+        int  status;     /* 0=OK, 1=BAD, 2=STOP */
+        int  progress;   /* 0-100 percent */
+        uint64_t speed;  /* bytes/sec */
+    } history[256];
+    int history_count;
+    /* Pending record (being built during transfer) */
+    int  history_pending_kind;
+    int  history_pending_port;
+    char history_pending_name[256];
+    uint64_t history_pending_start_ms;
+    uint64_t history_pending_total;
 
     /* Modal */
     bool modal_visible;
@@ -95,5 +112,9 @@ void ui_draw_rect(SDL_Renderer *r, int x, int y, int w, int h, SDL_Color c);
 void ui_draw_text(SDL_Renderer *r, const char *text, int x, int y, SDL_Color c);
 void ui_text_size(const char *text, int *w, int *h);
 bool ui_in_rect(int mx, int my, int x, int y, int w, int h);
+
+/* History persistence */
+void history_load(struct app_state *state);
+void history_save(struct app_state *state);
 
 #endif /* UI_H */
