@@ -33,6 +33,7 @@ struct net_context {
     void        *close_user;
 
     /* TX pending data (for lws WRITEABLE callback) */
+    uint8_t *tx_buf;            /* heap copy of data to send */
     const uint8_t *tx_data;
     size_t tx_len;
     size_t tx_sent;
@@ -82,6 +83,8 @@ static int raw_callback(struct lws *wsi, enum lws_callback_reasons reason,
                 nc->tx_sent += n;
                 if (nc->tx_sent >= nc->tx_len) {
                     nc->tx_pending = false;
+                    free(nc->tx_buf);
+                    nc->tx_buf = NULL;
                     nc->tx_data = NULL;
                     nc->tx_len = 0;
                     nc->tx_sent = 0;
@@ -298,7 +301,13 @@ int net_send(struct net_context *nc, const void *data, size_t len)
         return (n == (ssize_t)len) ? 0 : -1;
     }
 
-    nc->tx_data = (const uint8_t *)data;
+    /* Copy data to heap — caller may use stack buffer that goes
+       out of scope before the async writable callback fires */
+    free(nc->tx_buf);
+    nc->tx_buf = malloc(len);
+    if (!nc->tx_buf) return -1;
+    memcpy(nc->tx_buf, data, len);
+    nc->tx_data = nc->tx_buf;
     nc->tx_len = len;
     nc->tx_sent = 0;
     nc->tx_pending = true;
@@ -360,6 +369,7 @@ void *net_get_wsi(struct net_context *nc)
 void net_destroy(struct net_context *nc)
 {
     if (!nc) return;
+    free(nc->tx_buf);
     if (nc->listen_fd >= 0) close(nc->listen_fd);
     if (nc->sock_fd >= 0) close(nc->sock_fd);
     if (nc->udp_fd >= 0) close(nc->udp_fd);
