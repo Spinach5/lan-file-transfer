@@ -274,8 +274,18 @@ bool ui_in_rect(int mx, int my, int x, int y, int w, int h)
 /* Render a text field with focus border and blinking cursor */
 static void ui_text_field(SDL_Renderer *r, int x, int y, int w, int h,
                           const char *text, bool focused, int cursor_pos,
-                          const char *placeholder)
+                          const char *placeholder, bool disabled)
 {
+    if (disabled) {
+        /* Grayed out — disabled state */
+        ui_draw_rect(r, x, y, w, h, COLOR_BG);
+        SDL_SetRenderDrawColor(r, COLOR_DIM.r, COLOR_DIM.g, COLOR_DIM.b, 100);
+        SDL_Rect brect = {x, y, w, h};
+        SDL_RenderDrawRect(r, &brect);
+        ui_draw_text(r, text && text[0] ? text : placeholder, x + 6, y + (h - FONT_H) / 2, COLOR_DIM);
+        return;
+    }
+
     SDL_Color border = focused ? COLOR_ACCENT : COLOR_DIM;
     SDL_Color bg = focused ? COLOR_HOVER : COLOR_SURFACE;
 
@@ -322,9 +332,10 @@ static void ui_text_field(SDL_Renderer *r, int x, int y, int w, int h,
 /* Handle click on text field — returns true if field was activated */
 static bool ui_text_field_click(struct app_state *st, int mx, int my,
                                 int x, int y, int w, int h,
-                                int field_id, const char *value)
+                                int field_id, const char *value, bool disabled)
 {
     if (!ui_in_rect(mx, my, x, y, w, h)) return false;
+    if (disabled) return true;  /* consume click but don't activate */
 
     st->active_input = field_id;
     strncpy(st->input_buffer, value, sizeof(st->input_buffer) - 1);
@@ -388,7 +399,7 @@ static void render_scan_page(SDL_Renderer *r, struct app_state *st)
         char pbuf[16];
         snprintf(pbuf, sizeof(pbuf), "%d", st->scan_port);
         ui_text_field(r, 175, 46, 65, 28, pbuf,
-                      st->active_input == 7, st->active_input == 7 ? st->input_cursor : 0, "9876");
+                      st->active_input == 7, st->active_input == 7 ? st->input_cursor : 0, "9876", false);
     }
     ui_draw_text(r, st->scan_status, 260, 52, COLOR_DIM);
 
@@ -454,12 +465,14 @@ static void render_send_page(SDL_Renderer *r, struct app_state *st)
         snprintf(pbuf, sizeof(pbuf), "%d", st->send_port);
         ui_draw_text(r, "IP:", 20, y + 4, COLOR_TEXT);
         ui_text_field(r, 55, y, 170, 28, st->send_target_ip,
-                      st->active_input == 2, st->active_input == 2 ? st->input_cursor : 0,
-                      "127.0.0.1");
+                      st->active_input == 2 && !st->send_running,
+                      st->active_input == 2 ? st->input_cursor : 0,
+                      "127.0.0.1", st->send_running);
         ui_draw_text(r, "Port:", 235, y + 4, COLOR_TEXT);
         ui_text_field(r, 285, y, 70, 28, pbuf,
-                      st->active_input == 5, st->active_input == 5 ? st->input_cursor : 0,
-                      "9876");
+                      st->active_input == 5 && !st->send_running,
+                      st->active_input == 5 ? st->input_cursor : 0,
+                      "9876", st->send_running);
     }
     y += 40;
 
@@ -521,12 +534,14 @@ static void render_receive_page(SDL_Renderer *r, struct app_state *st)
         snprintf(pbuf, sizeof(pbuf), "%d", st->recv_port);
         ui_draw_text(r, "IP:", 20, y + 4, COLOR_TEXT);
         ui_text_field(r, 55, y, 170, 28, st->recv_target_ip,
-                      st->active_input == 4, st->active_input == 4 ? st->input_cursor : 0,
-                      "127.0.0.1");
+                      st->active_input == 4 && !st->recv_running,
+                      st->active_input == 4 ? st->input_cursor : 0,
+                      "127.0.0.1", st->recv_running);
         ui_draw_text(r, "Port:", 235, y + 4, COLOR_TEXT);
         ui_text_field(r, 285, y, 70, 28, pbuf,
-                      st->active_input == 6, st->active_input == 6 ? st->input_cursor : 0,
-                      "9876");
+                      st->active_input == 6 && !st->recv_running,
+                      st->active_input == 6 ? st->input_cursor : 0,
+                      "9876", st->recv_running);
     }
     y += 40;
 
@@ -732,7 +747,7 @@ bool ui_handle_event(SDL_Event *e, struct app_state *st)
             /* Scan port field */
             {
                 char spbuf[16]; snprintf(spbuf, sizeof(spbuf), "%d", st->scan_port);
-                if (ui_text_field_click(st, mx, my, 175, 46, 65, 28, 7, spbuf))
+                if (ui_text_field_click(st, mx, my, 175, 46, 65, 28, 7, spbuf, false))
                     return true;
             }
             /* Device list selection */
@@ -755,6 +770,7 @@ bool ui_handle_event(SDL_Event *e, struct app_state *st)
             break;
 
         case TAB_SEND:
+            if (st->send_running) break;  /* all controls disabled during send */
             /* Dir/File toggle */
             if (ui_in_rect(mx, my, st->window_w - 260, 50, 50, 28)) {
                 st->send_is_dir = true; return true;
@@ -773,9 +789,9 @@ bool ui_handle_event(SDL_Event *e, struct app_state *st)
             if (ui_in_rect(mx, my, 190, 90, 60, 28)) { st->send_protocol = 1; return true; }
             {
                 char spbuf[16]; snprintf(spbuf, sizeof(spbuf), "%d", st->send_port);
-                if (ui_text_field_click(st, mx, my, 55, 130, 170, 28, 2, st->send_target_ip))
+                if (ui_text_field_click(st, mx, my, 55, 130, 170, 28, 2, st->send_target_ip, st->send_running))
                     return true;
-                if (ui_text_field_click(st, mx, my, 285, 130, 70, 28, 5, spbuf))
+                if (ui_text_field_click(st, mx, my, 285, 130, 70, 28, 5, spbuf, st->send_running))
                     return true;
             }
             if (ui_in_rect(mx, my, 20, 170, 160, 32)) {
@@ -798,6 +814,7 @@ bool ui_handle_event(SDL_Event *e, struct app_state *st)
             break;
 
         case TAB_RECEIVE:
+            if (st->recv_running) break;  /* all controls disabled during recv */
             if (ui_in_rect(mx, my, st->window_w - 150, 50, 80, 28)) {
                 zenity_launch(st, "Select Save Directory", true, 2);
                 return true;
@@ -806,9 +823,9 @@ bool ui_handle_event(SDL_Event *e, struct app_state *st)
             if (ui_in_rect(mx, my, 190, 90, 60, 28)) { st->recv_protocol = 1; return true; }
             {
                 char rpbuf[16]; snprintf(rpbuf, sizeof(rpbuf), "%d", st->recv_port);
-                if (ui_text_field_click(st, mx, my, 55, 130, 170, 28, 4, st->recv_target_ip))
+                if (ui_text_field_click(st, mx, my, 55, 130, 170, 28, 4, st->recv_target_ip, st->recv_running))
                     return true;
-                if (ui_text_field_click(st, mx, my, 285, 130, 70, 28, 6, rpbuf))
+                if (ui_text_field_click(st, mx, my, 285, 130, 70, 28, 6, rpbuf, st->recv_running))
                     return true;
             }
             if (ui_in_rect(mx, my, 20, 170, 180, 32)) {
