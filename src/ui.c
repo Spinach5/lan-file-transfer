@@ -3,13 +3,37 @@
 #include "scanner.h"
 #include "transfer.h"
 #include "network.h"
-#include "file_browser.h"
 
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
 #include <pthread.h>
 #include <SDL2/SDL.h>
+
+/* ── Zenity file dialog helper ─────────────────────────────── */
+
+static char *zenity_select(const char *title, bool directory)
+{
+    char cmd[512];
+    if (directory)
+        snprintf(cmd, sizeof(cmd), "zenity --file-selection --directory --title=\"%s\" 2>/dev/null", title);
+    else
+        snprintf(cmd, sizeof(cmd), "zenity --file-selection --title=\"%s\" 2>/dev/null", title);
+
+    FILE *fp = popen(cmd, "r");
+    if (!fp) return NULL;
+
+    static char buf[1024];
+    if (fgets(buf, sizeof(buf), fp)) {
+        /* Strip trailing newline */
+        size_t len = strlen(buf);
+        if (len > 0 && buf[len-1] == '\n') buf[len-1] = '\0';
+        pclose(fp);
+        return buf;
+    }
+    pclose(fp);
+    return NULL;
+}
 
 /* ═══════════════════════════════════════════════════════════
    8x16 Bitmap Font — ASCII 32-126 (printable characters)
@@ -506,10 +530,6 @@ void ui_render(SDL_Renderer *renderer, struct app_state *state)
     case TAB_HISTORY: render_history_page(renderer, state); break;
     }
 
-    if (state->file_browser_visible) {
-        file_browser_render(renderer, state);
-    }
-
     /* Modal overlay */
     if (state->modal_visible) {
         ui_draw_rect(renderer, 0, 0, state->window_w, state->window_h,
@@ -545,11 +565,6 @@ bool ui_handle_event(SDL_Event *e, struct app_state *st)
         int tab_w = st->window_w / TAB_COUNT;
         st->current_tab = mx / tab_w;
         return true;
-    }
-
-    /* File browser overlay */
-    if (st->file_browser_visible) {
-        return file_browser_handle_event(e, st);
     }
 
     /* Modal overlay */
@@ -596,9 +611,11 @@ bool ui_handle_event(SDL_Event *e, struct app_state *st)
 
         case TAB_SEND:
             if (ui_in_rect(mx, my, st->window_w - 150, 50, 80, 28)) {
-                st->file_browser_visible = true;
-                st->file_browser_target = 1;
-                file_browser_init(st);
+                char *path = zenity_select("Select File to Send", false);
+                if (path) {
+                    strncpy(st->send_filepath, path, sizeof(st->send_filepath) - 1);
+                    snprintf(st->status_text, sizeof(st->status_text), "Selected: %s", path);
+                }
                 return true;
             }
             if (ui_in_rect(mx, my, 120, 90, 60, 28)) { st->send_protocol = 0; return true; }
@@ -625,9 +642,11 @@ bool ui_handle_event(SDL_Event *e, struct app_state *st)
 
         case TAB_RECEIVE:
             if (ui_in_rect(mx, my, st->window_w - 150, 50, 80, 28)) {
-                st->file_browser_visible = true;
-                st->file_browser_target = 2;
-                file_browser_init(st);
+                char *path = zenity_select("Select Save Directory", true);
+                if (path) {
+                    strncpy(st->recv_savepath, path, sizeof(st->recv_savepath) - 1);
+                    snprintf(st->status_text, sizeof(st->status_text), "Save to: %s", path);
+                }
                 return true;
             }
             if (ui_in_rect(mx, my, 120, 90, 60, 28)) { st->recv_protocol = 0; return true; }

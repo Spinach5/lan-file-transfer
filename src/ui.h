@@ -81,10 +81,6 @@ struct app_state {
     char input_buffer[1024];
     int  input_cursor;
 
-    /* File browser */
-    bool file_browser_visible;
-    char file_browser_result[1024];
-    int  file_browser_target; /* 1=send path, 2=recv path */
 };
 
 /* ── UI API ────────────────────────────────────────────────── */

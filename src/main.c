@@ -217,9 +217,7 @@ int main(int argc, char **argv)
 
             case SDL_KEYDOWN:
                 if (event.key.keysym.sym == SDLK_ESCAPE) {
-                    if (state.file_browser_visible)
-                        state.file_browser_visible = false;
-                    else if (state.modal_visible)
+                    if (state.modal_visible)
                         state.modal_visible = false;
                     else {
                         state.active_input = 0;
