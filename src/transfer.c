@@ -111,7 +111,7 @@ static int send_meta(struct net_context *nc, const char *filename,
 
 /* ── TCP send with direct socket I/O ──────────────────────── */
 
-static int sock_read_full(int fd, void *buf, size_t len, int timeout_ms)
+static int sock_read_full(socket_t fd, void *buf, size_t len, int timeout_ms)
 {
     size_t received = 0;
     uint8_t *p = (uint8_t *)buf;
@@ -124,14 +124,14 @@ static int sock_read_full(int fd, void *buf, size_t len, int timeout_ms)
         tv.tv_usec = (timeout_ms % 1000) * 1000;
         int ret = select(fd + 1, &fds, NULL, NULL, &tv);
         if (ret <= 0) return -1;
-        ssize_t n = read(fd, p + received, len - received);
+        ssize_t n = sock_read(fd, p + received, len - received);
         if (n <= 0) return -1;
         received += n;
     }
     return 0;
 }
 
-static int sock_write_full(int fd, const void *buf, size_t len)
+static int sock_write_full(socket_t fd, const void *buf, size_t len)
 {
     size_t sent = 0;
     const uint8_t *p = (const uint8_t *)buf;
@@ -143,7 +143,7 @@ static int sock_write_full(int fd, const void *buf, size_t len)
         struct timeval tv = {5, 0};
         int ret = select(fd + 1, NULL, &fds, NULL, &tv);
         if (ret <= 0) return -1;
-        ssize_t n = write(fd, p + sent, len - sent);
+        ssize_t n = sock_write(fd, p + sent, len - sent);
         if (n <= 0) return -1;
         sent += n;
     }
@@ -303,6 +303,8 @@ static int tcp_send_file(struct net_context *nc, const char *filepath,
     }
 
     const char *fname = strrchr(filepath, '/');
+    const char *bs    = strrchr(filepath, '\\');
+    if (bs > fname) fname = bs;   /* Windows backslash */
     if (fname) fname++; else fname = filepath;
 
     /* Send meta */
@@ -467,7 +469,7 @@ static void tcp_recv_file(struct net_context *nc, const char *savepath)
             return;
         }
 
-        ssize_t n = read(fd, buf, to_read);
+        ssize_t n = sock_read(fd, buf, to_read);
         if (n <= 0) {
             push_error("Receive failed");
             fclose(fp);
@@ -512,6 +514,8 @@ static void udp_send_file(struct net_context *nc, const char *filepath)
     fseek(fp, 0, SEEK_SET);
 
     const char *fname = strrchr(filepath, '/');
+    const char *bs    = strrchr(filepath, '\\');
+    if (bs > fname) fname = bs;   /* Windows backslash */
     if (fname) fname++; else fname = filepath;
 
     /* Send meta 3 times for reliability */

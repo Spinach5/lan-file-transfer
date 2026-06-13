@@ -11,11 +11,22 @@
 #include <io.h>
 #include <direct.h>
 #include <process.h>
+#ifdef __GNUC__
+/* MinGW provides POSIX headers — include for sleep/usleep/etc. */
+#include <unistd.h>
+#endif
 
 /* Map POSIX to Windows */
+/* sleep/usleep are only needed for MSVC — MinGW has them in <unistd.h> */
+#ifndef __GNUC__
 #define sleep(s)          Sleep((s)*1000)
 #define usleep(us)        Sleep((us)/1000)
-#define close(fd)         closesocket(fd)
+#endif
+/* NOTE: do NOT #define close → closesocket.
+ * It breaks libwebsockets' internal struct member names
+ * (LWS_FOP_CLOSE expands to 'close') and incorrectly maps
+ * regular file close() to closesocket().
+ * Use close_sock() to close sockets. */
 #define strcasecmp        _stricmp
 #define strncasecmp       _strnicmp
 #define getcwd(b,s)       _getcwd(b,s)
@@ -24,6 +35,7 @@
 #define unlink(p)         _unlink(p)
 #define stat              _stat
 #define fstat             _fstat
+#define lstat             _stat   /* no symlinks on Windows, lstat ≡ stat */
 
 typedef int socklen_t;
 typedef SOCKET socket_t;
@@ -68,6 +80,30 @@ static inline int sock_set_nonblock(socket_t fd) {
     return ioctlsocket(fd, FIONBIO, &mode);
 }
 
+/* Portable socket close (closesocket on Win, close on POSIX) */
+static inline int close_sock(socket_t fd) {
+    return closesocket(fd);
+}
+
+/* Portable setsockopt/getsockopt for integer values.
+ * Windows' Winsock expects (const char *) for optval,
+ * while POSIX expects (const void *). The cast works on both. */
+static inline int sock_setopt_int(socket_t fd, int level, int optname, int val) {
+    return setsockopt(fd, level, optname, (const char *)&val, sizeof(val));
+}
+static inline int sock_getopt_int(socket_t fd, int level, int optname, int *val) {
+    socklen_t len = sizeof(*val);
+    return getsockopt(fd, level, optname, (char *)val, &len);
+}
+
+/* Portable socket I/O — Windows needs send/recv, POSIX uses write/read */
+static inline ssize_t sock_write(socket_t fd, const void *buf, size_t len) {
+    return (ssize_t)send(fd, (const char *)buf, (int)len, 0);
+}
+static inline ssize_t sock_read(socket_t fd, void *buf, size_t len) {
+    return (ssize_t)recv(fd, (char *)buf, (int)len, 0);
+}
+
 /* Missing POSIX types */
 #define ssize_t SSIZE_T
 
@@ -92,6 +128,25 @@ typedef int socket_t;
 static inline int sock_set_nonblock(socket_t fd) {
     int flags = fcntl(fd, F_GETFL, 0);
     return fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+}
+
+static inline int close_sock(socket_t fd) {
+    return close(fd);
+}
+
+static inline int sock_setopt_int(socket_t fd, int level, int optname, int val) {
+    return setsockopt(fd, level, optname, &val, sizeof(val));
+}
+static inline int sock_getopt_int(socket_t fd, int level, int optname, int *val) {
+    socklen_t len = sizeof(*val);
+    return getsockopt(fd, level, optname, val, &len);
+}
+
+static inline ssize_t sock_write(socket_t fd, const void *buf, size_t len) {
+    return write(fd, buf, len);
+}
+static inline ssize_t sock_read(socket_t fd, void *buf, size_t len) {
+    return read(fd, buf, len);
 }
 #endif
 

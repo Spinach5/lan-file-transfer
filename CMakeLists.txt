@@ -33,6 +33,11 @@ set(SOURCES
 if(BUILD_GUI)
     message(STATUS "Building with SDL2 GUI")
     find_package(SDL2 REQUIRED)
+    # Work around CMake/Win32 appending .lib to SDL2main's shell32 dependency
+    if(WIN32 AND NOT MSVC)
+        set_property(TARGET SDL2::SDL2main PROPERTY INTERFACE_LINK_LIBRARIES
+            "-lshell32" "$<\$<STREQUAL:\$<TARGET_PROPERTY:TYPE>,EXECUTABLE>:-Wl,--undefined=WinMain>")
+    endif()
     list(APPEND SOURCES src/main.c src/scanner.c src/ui.c)
     add_definitions(-DBUILD_GUI)
 else()
@@ -53,8 +58,8 @@ if(BUILD_GUI)
 endif()
 
 target_link_libraries(lanft
-    ${LIBWEBSOCKETS_LIBRARIES}
-    ${LIBARCHIVE_LIBRARIES}
+    ${LIBWEBSOCKETS_LDFLAGS}
+    ${LIBARCHIVE_LDFLAGS}
     Threads::Threads
 )
 
@@ -63,5 +68,5 @@ if(BUILD_GUI)
 endif()
 
 if(WIN32)
-    target_link_libraries(lanft ws2_32 iphlpapi)
+    target_link_libraries(lanft -lws2_32 -liphlpapi -lshell32 -lcomdlg32 -lole32)
 endif()

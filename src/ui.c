@@ -3,6 +3,7 @@
 #include "scanner.h"
 #include "transfer.h"
 #include "network.h"
+#include "compat.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -10,7 +11,13 @@
 #include <pthread.h>
 #include <SDL2/SDL.h>
 
-/* ── Zenity file dialog (async, runs in background thread) ─── */
+/* ── File dialog ─────────────────────────────────────────────── */
+
+#if defined(_WIN32) || defined(_WIN64)
+#include <commdlg.h>
+#include <shlobj.h>
+#define WIN32_FILE_BUF 1
+#endif
 
 struct zenity_args {
     char title[256];
@@ -18,9 +25,13 @@ struct zenity_args {
     int  target;  /* 1=send path, 2=recv save path */
 };
 
+/* Linux: background thread to run zenity (async) */
+#ifndef _WIN32
 static void *zenity_thread(void *arg)
 {
     struct zenity_args *za = (struct zenity_args *)arg;
+    char *path = NULL;
+    static char buf[1024];  /* must outlive this function — pushed to SDL event */
 
     char cmd[512];
     if (za->directory)
@@ -29,9 +40,6 @@ static void *zenity_thread(void *arg)
         snprintf(cmd, sizeof(cmd), "zenity --file-selection --title=\"%s\" 2>/dev/null", za->title);
 
     FILE *fp = popen(cmd, "r");
-    char *path = NULL;
-    static char buf[1024];  /* must outlive this function — pushed to SDL event */
-
     if (fp) {
         if (fgets(buf, sizeof(buf), fp)) {
             size_t len = strlen(buf);
@@ -52,9 +60,52 @@ static void *zenity_thread(void *arg)
     free(za);
     return NULL;
 }
+#endif /* !_WIN32 */
 
 static void zenity_launch(struct app_state *st, const char *title, bool directory, int target)
 {
+#if defined(_WIN32) || defined(_WIN64)
+    /* Windows: call native dialog synchronously on the MAIN thread.
+     * Win32 common dialogs (GetOpenFileName / SHBrowseForFolder)
+     * require the calling thread to have an active message pump,
+     * which only the main SDL thread has. */
+    (void)st;
+    static char buf[MAX_PATH];
+    char *path = NULL;
+    buf[0] = '\0';
+
+    if (directory) {
+        BROWSEINFOA bi = {0};
+        bi.lpszTitle = title;
+        bi.ulFlags = BIF_RETURNONLYFSDIRS | BIF_NEWDIALOGSTYLE;
+        LPITEMIDLIST pidl = SHBrowseForFolderA(&bi);
+        if (pidl) {
+            if (SHGetPathFromIDListA(pidl, buf))
+                path = buf;
+            CoTaskMemFree(pidl);
+        }
+    } else {
+        OPENFILENAMEA ofn = {0};
+        ofn.lStructSize = sizeof(ofn);
+        ofn.lpstrFile = buf;
+        ofn.lpstrFile[0] = '\0';
+        ofn.nMaxFile = sizeof(buf);
+        ofn.lpstrTitle = title;
+        ofn.Flags = OFN_FILEMUSTEXIST | OFN_HIDEREADONLY | OFN_PATHMUSTEXIST;
+        if (GetOpenFileNameA(&ofn))
+            path = buf;
+    }
+
+    /* Push result via SDL event — data1=path or NULL, data2=target */
+    SDL_Event event;
+    SDL_memset(&event, 0, sizeof(event));
+    event.type = USEREVENT_ZENITY_RESULT;
+    event.user.code = target;
+    event.user.data1 = path;
+    SDL_PushEvent(&event);
+#else
+    /* Linux: spawn background thread to run zenity (non-blocking) */
+    (void)st;
     struct zenity_args *za = malloc(sizeof(*za));
     if (!za) return;
     strncpy(za->title, title, sizeof(za->title) - 1);
@@ -64,6 +115,7 @@ static void zenity_launch(struct app_state *st, const char *title, bool director
     pthread_t tid;
     pthread_create(&tid, NULL, zenity_thread, za);
     pthread_detach(tid);
+#endif
 }
 
 /* ═══════════════════════════════════════════════════════════

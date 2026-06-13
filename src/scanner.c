@@ -142,8 +142,7 @@ static void *scan_ip_thread(void *arg)
 
         if (select(fd + 1, NULL, &wfds, NULL, &tv) > 0) {
             int err = 0;
-            socklen_t errlen = sizeof(err);
-            getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &errlen);
+            sock_getopt_int(fd, SOL_SOCKET, SO_ERROR, &err);
             if (err == 0) {
                 struct event_scan_found *evt = calloc(1, sizeof(*evt));
                 strncpy(evt->ip, ip, sizeof(evt->ip) - 1);
@@ -157,7 +156,7 @@ static void *scan_ip_thread(void *arg)
                 SDL_PushEvent(&event);
             }
         }
-        close(fd);
+        close_sock(fd);
     }
     return NULL;
 }

@@ -74,9 +74,9 @@ static int raw_callback(struct lws *wsi, enum lws_callback_reasons reason,
         nc = sess->nc;
         if (nc && nc->tx_pending && nc->sock_fd != INVALID_FD) {
             size_t remaining = nc->tx_len - nc->tx_sent;
-            ssize_t n = write(nc->sock_fd,
-                              nc->tx_data + nc->tx_sent,
-                              remaining);
+            ssize_t n = sock_write(nc->sock_fd,
+                                  nc->tx_data + nc->tx_sent,
+                                  remaining);
             if (n > 0) {
                 nc->tx_sent += n;
                 if (nc->tx_sent >= nc->tx_len) {
@@ -170,26 +170,25 @@ int net_listen_ip(struct net_context *nc, const char *ip, int port)
     nc->listen_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (nc->listen_fd == INVALID_FD) return -1;
 
-    int opt = 1;
-    setsockopt(nc->listen_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+    sock_setopt_int(nc->listen_fd, SOL_SOCKET, SO_REUSEADDR, 1);
 
     struct sockaddr_in addr;
     memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
     addr.sin_port = htons(port);
     if (inet_pton(AF_INET, ip, &addr.sin_addr) != 1) {
-        close(nc->listen_fd);
+        close_sock(nc->listen_fd);
         nc->listen_fd = -1;
         return -1;
     }
 
     if (bind(nc->listen_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
-        close(nc->listen_fd);
+        close_sock(nc->listen_fd);
         nc->listen_fd = -1;
         return -1;
     }
     if (listen(nc->listen_fd, 1) < 0) {
-        close(nc->listen_fd);
+        close_sock(nc->listen_fd);
         nc->listen_fd = -1;
         return -1;
     }
@@ -217,7 +216,7 @@ int net_accept(struct net_context *nc)
         nc->wsi = lws_adopt_descriptor_vhost(nc->vhost, LWS_ADOPT_RAW_FILE_DESC,
                                               fd, "raw", NULL);
         if (!nc->wsi) {
-            close(nc->sock_fd);
+            close_sock(nc->sock_fd);
             nc->sock_fd = -1;
             return -1;
         }
@@ -237,13 +236,13 @@ int net_connect(struct net_context *nc, const char *ip, int port)
     addr.sin_family = AF_INET;
     addr.sin_port = htons(port);
     if (inet_pton(AF_INET, ip, &addr.sin_addr) != 1) {
-        close(nc->sock_fd);
+        close_sock(nc->sock_fd);
         nc->sock_fd = -1;
         return -1;
     }
 
     if (connect(nc->sock_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
-        close(nc->sock_fd);
+        close_sock(nc->sock_fd);
         nc->sock_fd = -1;
         return -1;
     }
@@ -253,7 +252,7 @@ int net_connect(struct net_context *nc, const char *ip, int port)
     nc->wsi = lws_adopt_descriptor_vhost(nc->vhost, LWS_ADOPT_RAW_FILE_DESC,
                                           fd, "raw", NULL);
     if (!nc->wsi) {
-        close(nc->sock_fd);
+        close_sock(nc->sock_fd);
         nc->sock_fd = -1;
         return -1;
     }
@@ -268,8 +267,7 @@ int net_udp_bind(struct net_context *nc, int port)
     nc->udp_fd = socket(AF_INET, SOCK_DGRAM, 0);
     if (nc->udp_fd == INVALID_FD) return -1;
 
-    int opt = 1;
-    setsockopt(nc->udp_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+    sock_setopt_int(nc->udp_fd, SOL_SOCKET, SO_REUSEADDR, 1);
 
     struct sockaddr_in addr;
     memset(&addr, 0, sizeof(addr));
@@ -278,7 +276,7 @@ int net_udp_bind(struct net_context *nc, int port)
     addr.sin_port = htons(port);
 
     if (bind(nc->udp_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
-        close(nc->udp_fd);
+        close_sock(nc->udp_fd);
         nc->udp_fd = -1;
         return -1;
     }
@@ -405,9 +403,9 @@ void net_destroy(struct net_context *nc)
 {
     if (!nc) return;
     free(nc->tx_buf);
-    if (nc->listen_fd != INVALID_FD) close(nc->listen_fd);
-    if (nc->sock_fd != INVALID_FD) close(nc->sock_fd);
-    if (nc->udp_fd != INVALID_FD) close(nc->udp_fd);
+    if (nc->listen_fd != INVALID_FD) close_sock(nc->listen_fd);
+    if (nc->sock_fd != INVALID_FD) close_sock(nc->sock_fd);
+    if (nc->udp_fd != INVALID_FD) close_sock(nc->udp_fd);
     if (nc->ctx) lws_context_destroy(nc->ctx);
     SOCKET_QUIT();
     free(nc);
