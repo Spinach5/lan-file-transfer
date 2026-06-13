@@ -48,6 +48,7 @@ struct app_state {
     /* Send page */
     char send_filepath[1024];
     char send_target_ip[64];
+    int  send_port;
     int  send_protocol;
     bool send_running;
     uint64_t send_progress_done;
@@ -56,6 +57,7 @@ struct app_state {
     /* Receive page */
     char recv_savepath[1024];
     char recv_target_ip[64];
+    int  recv_port;
     int  recv_protocol;
     bool recv_listening;
     bool recv_running;

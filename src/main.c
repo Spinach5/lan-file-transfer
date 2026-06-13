@@ -61,27 +61,26 @@ static void start_send(struct app_state *state)
     }
 
     if (state->send_protocol == FT_PROTO_TCP) {
-        if (net_listen(nc, FT_DEFAULT_PORT) != 0) {
+        if (net_listen(nc, state->send_port) != 0) {
             struct event_error *err = calloc(1, sizeof(*err));
-            snprintf(err->message, sizeof(err->message), "Failed to listen on port %d", FT_DEFAULT_PORT);
+            snprintf(err->message, sizeof(err->message), "Failed to listen on port %d", state->send_port);
             SDL_Event ev; SDL_memset(&ev, 0, sizeof(ev));
             ev.type = USEREVENT_ERROR; ev.user.data1 = err;
             SDL_PushEvent(&ev);
             net_destroy(nc);
             return;
         }
-        /* transfer_send will call net_accept internally */
     } else {
-        if (net_udp_bind(nc, FT_DEFAULT_PORT) != 0) {
+        if (net_udp_bind(nc, state->send_port) != 0) {
             struct event_error *err = calloc(1, sizeof(*err));
-            snprintf(err->message, sizeof(err->message), "Failed to bind UDP port %d", FT_DEFAULT_PORT);
+            snprintf(err->message, sizeof(err->message), "Failed to bind UDP port %d", state->send_port);
             SDL_Event ev; SDL_memset(&ev, 0, sizeof(ev));
             ev.type = USEREVENT_ERROR; ev.user.data1 = err;
             SDL_PushEvent(&ev);
             net_destroy(nc);
             return;
         }
-        net_udp_set_peer(nc, state->send_target_ip, FT_DEFAULT_PORT);
+        net_udp_set_peer(nc, state->send_target_ip, state->send_port);
     }
 
     send_thread_args *args = malloc(sizeof(*args));
@@ -107,11 +106,11 @@ static void start_recv(struct app_state *state)
     }
 
     if (state->recv_protocol == FT_PROTO_TCP) {
-        if (net_connect(nc, state->recv_target_ip, FT_DEFAULT_PORT) != 0) {
+        if (net_connect(nc, state->recv_target_ip, state->recv_port) != 0) {
             struct event_error *err = calloc(1, sizeof(*err));
             snprintf(err->message, sizeof(err->message),
                      "Failed to connect to %s:%d. Ensure sender is listening.",
-                     state->recv_target_ip, FT_DEFAULT_PORT);
+                     state->recv_target_ip, state->recv_port);
             SDL_Event ev; SDL_memset(&ev, 0, sizeof(ev));
             ev.type = USEREVENT_ERROR; ev.user.data1 = err;
             SDL_PushEvent(&ev);
@@ -119,9 +118,9 @@ static void start_recv(struct app_state *state)
             return;
         }
     } else {
-        if (net_udp_bind(nc, FT_DEFAULT_PORT) != 0) {
+        if (net_udp_bind(nc, state->recv_port) != 0) {
             struct event_error *err = calloc(1, sizeof(*err));
-            snprintf(err->message, sizeof(err->message), "Failed to bind UDP port %d", FT_DEFAULT_PORT);
+            snprintf(err->message, sizeof(err->message), "Failed to bind UDP port %d", state->recv_port);
             SDL_Event ev; SDL_memset(&ev, 0, sizeof(ev));
             ev.type = USEREVENT_ERROR; ev.user.data1 = err;
             SDL_PushEvent(&ev);
@@ -186,6 +185,8 @@ int main(int argc, char **argv)
     state.current_tab = TAB_SCAN;
     state.selected_device = -1;
     state.active_input = 0;
+    state.send_port = FT_DEFAULT_PORT;
+    state.recv_port = FT_DEFAULT_PORT;
     state.send_protocol = FT_PROTO_TCP;
     state.recv_protocol = FT_PROTO_TCP;
     strncpy(state.status_text, "Ready — select a tab to begin",
@@ -221,7 +222,10 @@ int main(int argc, char **argv)
                         state.active_input = 0;
                         SDL_StopTextInput();
                     }
+                    break;  /* ESC handled */
                 }
+                /* Pass other keys to UI handler */
+                ui_handle_event(&event, &state);
                 break;
 
             /* ── Custom events from worker threads ────── */

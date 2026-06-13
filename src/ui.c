@@ -308,9 +308,17 @@ static void render_send_page(SDL_Renderer *r, struct app_state *st)
     y += 40;
 
     ui_draw_text(r, "Target IP:", 20, y + 4, COLOR_TEXT);
-    ui_draw_rect(r, 120, y, 200, 28, COLOR_SURFACE);
+    ui_draw_rect(r, 120, y, 180, 28, COLOR_SURFACE);
     ui_draw_text(r, st->send_target_ip[0] ? st->send_target_ip : "0.0.0.0",
                  126, y + 4, st->send_target_ip[0] ? COLOR_TEXT : COLOR_DIM);
+    /* Port */
+    {
+        char pbuf[16];
+        snprintf(pbuf, sizeof(pbuf), "%d", st->send_port);
+        ui_draw_text(r, "Port:", 310, y + 4, COLOR_TEXT);
+        ui_draw_rect(r, 360, y, 70, 28, COLOR_SURFACE);
+        ui_draw_text(r, pbuf, 366, y + 4, COLOR_TEXT);
+    }
     y += 40;
 
     /* Send button */
@@ -367,9 +375,17 @@ static void render_receive_page(SDL_Renderer *r, struct app_state *st)
     y += 40;
 
     ui_draw_text(r, "Sender IP:", 20, y + 4, COLOR_TEXT);
-    ui_draw_rect(r, 120, y, 200, 28, COLOR_SURFACE);
+    ui_draw_rect(r, 120, y, 180, 28, COLOR_SURFACE);
     ui_draw_text(r, st->recv_target_ip[0] ? st->recv_target_ip : "0.0.0.0",
                  126, y + 4, st->recv_target_ip[0] ? COLOR_TEXT : COLOR_DIM);
+    /* Port */
+    {
+        char pbuf[16];
+        snprintf(pbuf, sizeof(pbuf), "%d", st->recv_port);
+        ui_draw_text(r, "Port:", 310, y + 4, COLOR_TEXT);
+        ui_draw_rect(r, 360, y, 70, 28, COLOR_SURFACE);
+        ui_draw_text(r, pbuf, 366, y + 4, COLOR_TEXT);
+    }
     y += 40;
 
     /* Listen button */
@@ -521,9 +537,16 @@ bool ui_handle_event(SDL_Event *e, struct app_state *st)
             }
             if (ui_in_rect(mx, my, 120, 90, 60, 28)) { st->send_protocol = 0; return true; }
             if (ui_in_rect(mx, my, 190, 90, 60, 28)) { st->send_protocol = 1; return true; }
-            if (ui_in_rect(mx, my, 120, 130, 200, 28)) {
+            if (ui_in_rect(mx, my, 120, 130, 180, 28)) {
                 st->active_input = 2;
                 strncpy(st->input_buffer, st->send_target_ip, sizeof(st->input_buffer) - 1);
+                st->input_cursor = strlen(st->input_buffer);
+                SDL_StartTextInput();
+                return true;
+            }
+            if (ui_in_rect(mx, my, 360, 130, 70, 28)) {
+                st->active_input = 5;
+                snprintf(st->input_buffer, sizeof(st->input_buffer), "%d", st->send_port);
                 st->input_cursor = strlen(st->input_buffer);
                 SDL_StartTextInput();
                 return true;
@@ -550,9 +573,16 @@ bool ui_handle_event(SDL_Event *e, struct app_state *st)
             }
             if (ui_in_rect(mx, my, 120, 90, 60, 28)) { st->recv_protocol = 0; return true; }
             if (ui_in_rect(mx, my, 190, 90, 60, 28)) { st->recv_protocol = 1; return true; }
-            if (ui_in_rect(mx, my, 120, 130, 200, 28)) {
+            if (ui_in_rect(mx, my, 120, 130, 180, 28)) {
                 st->active_input = 4;
                 strncpy(st->input_buffer, st->recv_target_ip, sizeof(st->input_buffer) - 1);
+                st->input_cursor = strlen(st->input_buffer);
+                SDL_StartTextInput();
+                return true;
+            }
+            if (ui_in_rect(mx, my, 360, 130, 70, 28)) {
+                st->active_input = 6;
+                snprintf(st->input_buffer, sizeof(st->input_buffer), "%d", st->recv_port);
                 st->input_cursor = strlen(st->input_buffer);
                 SDL_StartTextInput();
                 return true;
@@ -582,6 +612,10 @@ bool ui_handle_event(SDL_Event *e, struct app_state *st)
                 strncpy(st->send_target_ip, st->input_buffer, sizeof(st->send_target_ip) - 1);
             if (st->active_input == 4)
                 strncpy(st->recv_target_ip, st->input_buffer, sizeof(st->recv_target_ip) - 1);
+            if (st->active_input == 5)
+                st->send_port = atoi(st->input_buffer);
+            if (st->active_input == 6)
+                st->recv_port = atoi(st->input_buffer);
         }
         return true;
     }
@@ -599,6 +633,10 @@ bool ui_handle_event(SDL_Event *e, struct app_state *st)
                 strncpy(st->send_target_ip, st->input_buffer, sizeof(st->send_target_ip) - 1);
             if (st->active_input == 4)
                 strncpy(st->recv_target_ip, st->input_buffer, sizeof(st->recv_target_ip) - 1);
+            if (st->active_input == 5)
+                st->send_port = atoi(st->input_buffer);
+            if (st->active_input == 6)
+                st->recv_port = atoi(st->input_buffer);
             return true;
         }
         if (e->key.keysym.sym == SDLK_RETURN || e->key.keysym.sym == SDLK_ESCAPE) {
