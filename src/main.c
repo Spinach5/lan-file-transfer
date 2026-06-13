@@ -188,6 +188,7 @@ int main(int argc, char **argv)
     state.current_tab = TAB_SCAN;
     state.selected_device = -1;
     state.active_input = 0;
+    state.scan_port = FT_DEFAULT_PORT;
     state.send_port = FT_DEFAULT_PORT;
     state.recv_port = FT_DEFAULT_PORT;
     state.send_protocol = FT_PROTO_TCP;

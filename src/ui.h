@@ -39,6 +39,7 @@ struct app_state {
 
     /* Scan page */
     char scan_status[256];
+    int  scan_port;
     struct {
         char ip[64];
         char hostname[256];

@@ -382,8 +382,15 @@ static void render_scan_page(SDL_Renderer *r, struct app_state *st)
 {
     int list_y = 88, list_h = st->window_h - 128;
 
-    ui_button(r, "Scan", 20, 46, 120, 32, 0, 0, false);
-    ui_draw_text(r, st->scan_status, 160, 52, COLOR_DIM);
+    ui_button(r, "Scan", 20, 46, 100, 32, 0, 0, false);
+    ui_draw_text(r, "Port:", 128, 52, COLOR_TEXT);
+    {
+        char pbuf[16];
+        snprintf(pbuf, sizeof(pbuf), "%d", st->scan_port);
+        ui_text_field(r, 175, 46, 65, 28, pbuf,
+                      st->active_input == 7, st->active_input == 7 ? st->input_cursor : 0, "9876");
+    }
+    ui_draw_text(r, st->scan_status, 260, 52, COLOR_DIM);
 
     ui_draw_rect(r, 20, list_y, st->window_w - 40, list_h, COLOR_SURFACE);
     ui_draw_text(r, "IP Address", 30, list_y + 5, COLOR_DIM);
@@ -614,12 +621,18 @@ bool ui_handle_event(SDL_Event *e, struct app_state *st)
     if (e->type == SDL_MOUSEBUTTONDOWN) {
         switch (st->current_tab) {
         case TAB_SCAN:
-            if (ui_in_rect(mx, my, 20, 46, 120, 32)) {
+            if (ui_in_rect(mx, my, 20, 46, 100, 32)) {
                 strncpy(st->scan_status, "Scanning...", sizeof(st->scan_status) - 1);
                 st->device_count = 0;
                 st->selected_device = -1;
-                scanner_start(FT_DEFAULT_PORT);
+                scanner_start((uint16_t)st->scan_port);
                 return true;
+            }
+            /* Scan port field */
+            {
+                char spbuf[16]; snprintf(spbuf, sizeof(spbuf), "%d", st->scan_port);
+                if (ui_text_field_click(st, mx, my, 175, 46, 65, 28, 7, spbuf))
+                    return true;
             }
             /* Device list selection */
             {
@@ -710,6 +723,10 @@ bool ui_handle_event(SDL_Event *e, struct app_state *st)
                 st->send_port = atoi(st->input_buffer);
             if (st->active_input == 6)
                 st->recv_port = atoi(st->input_buffer);
+            if (st->active_input == 7)
+                st->scan_port = atoi(st->input_buffer);
+            if (st->active_input == 7)
+                st->scan_port = atoi(st->input_buffer);
         }
         return true;
     }
@@ -731,6 +748,8 @@ bool ui_handle_event(SDL_Event *e, struct app_state *st)
                 st->send_port = atoi(st->input_buffer);
             if (st->active_input == 6)
                 st->recv_port = atoi(st->input_buffer);
+            if (st->active_input == 7)
+                st->scan_port = atoi(st->input_buffer);
             return true;
         }
         if (e->key.keysym.sym == SDLK_RETURN || e->key.keysym.sym == SDLK_ESCAPE) {
