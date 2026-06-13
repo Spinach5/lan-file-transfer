@@ -428,35 +428,53 @@ static void render_send_page(SDL_Renderer *r, struct app_state *st)
     int W = st->window_w;
     int y = 50;
 
-    ui_draw_text(r, "File:", 20, y + 4, COLOR_TEXT);
-    ui_draw_rect(r, 70, y, W - 340, 28, COLOR_SURFACE);
+    bool dis = st->send_running;
+    SDL_Color ftc = dis ? COLOR_DIM : COLOR_TEXT;
+    SDL_Color fbg_c = dis ? COLOR_BG : COLOR_SURFACE;
+
+    ui_draw_text(r, "File:", 20, y + 4, ftc);
+    ui_draw_rect(r, 70, y, W - 340, 28, fbg_c);
     ui_draw_text(r, st->send_filepath[0] ? st->send_filepath : "Click Browse...",
-                 76, y + 4, st->send_filepath[0] ? COLOR_TEXT : COLOR_DIM);
+                 76, y + 4, st->send_filepath[0] ? ftc : COLOR_DIM);
     /* Dir/File toggle */
     {
-        SDL_Color tbg = st->send_is_dir ? COLOR_ACCENT : COLOR_SURFACE;
-        SDL_Color ttc = st->send_is_dir ? COLOR_BG : COLOR_TEXT;
+        SDL_Color tbg = dis ? COLOR_BG : (st->send_is_dir ? COLOR_ACCENT : COLOR_SURFACE);
+        SDL_Color ttc = dis ? COLOR_DIM : (st->send_is_dir ? COLOR_BG : COLOR_TEXT);
         ui_draw_rect(r, W - 260, y, 50, 28, tbg);
         int tw, th; ui_text_size("Dir", &tw, &th);
         ui_draw_text(r, "Dir", W - 260 + (50 - tw) / 2, y + (28 - th) / 2, ttc);
     }
     {
-        SDL_Color fbg = st->send_is_dir ? COLOR_SURFACE : COLOR_ACCENT;
-        SDL_Color ftc = st->send_is_dir ? COLOR_TEXT : COLOR_BG;
-        ui_draw_rect(r, W - 205, y, 50, 28, fbg);
+        SDL_Color fbg2 = dis ? COLOR_BG : (st->send_is_dir ? COLOR_SURFACE : COLOR_ACCENT);
+        SDL_Color ftc2 = dis ? COLOR_DIM : (st->send_is_dir ? COLOR_TEXT : COLOR_BG);
+        ui_draw_rect(r, W - 205, y, 50, 28, fbg2);
         int tw, th; ui_text_size("File", &tw, &th);
-        ui_draw_text(r, "File", W - 205 + (50 - tw) / 2, y + (28 - th) / 2, ftc);
+        ui_draw_text(r, "File", W - 205 + (50 - tw) / 2, y + (28 - th) / 2, ftc2);
     }
-    ui_button(r, "Browse", W - 150, y, 80, 28, 0, 0, false);
+    {
+        SDL_Color bb = dis ? COLOR_DIM : COLOR_SURFACE;
+        SDL_Color bt = dis ? COLOR_BG : COLOR_TEXT;
+        ui_draw_rect(r, W - 150, y, 80, 28, bb);
+        int tw, th; ui_text_size("Browse", &tw, &th);
+        ui_draw_text(r, "Browse", W - 150 + (80 - tw) / 2, y + (28 - th) / 2, bt);
+    }
     y += 40;
 
-    ui_draw_text(r, "Protocol:", 20, y + 4, COLOR_TEXT);
-    ui_button(r, "TCP", 120, y, 60, 28, 0, 0, false);
-    ui_button(r, "UDP", 190, y, 60, 28, 0, 0, false);
-    { SDL_Color sel = COLOR_ACCENT;
-      SDL_SetRenderDrawColor(r, sel.r, sel.g, sel.b, sel.a);
-      SDL_Rect pr = {st->send_protocol == 0 ? 120 : 190, y, 60, 28};
-      SDL_RenderDrawRect(r, &pr); }
+    ui_draw_text(r, "Protocol:", 20, y + 4, ftc);
+    {
+        SDL_Color tcp_bg = dis ? COLOR_BG : COLOR_SURFACE;
+        SDL_Color udp_bg = dis ? COLOR_BG : COLOR_SURFACE;
+        ui_draw_rect(r, 120, y, 60, 28, tcp_bg);
+        ui_draw_text(r, "TCP", 130, y + 4, ftc);
+        ui_draw_rect(r, 190, y, 60, 28, udp_bg);
+        ui_draw_text(r, "UDP", 200, y + 4, ftc);
+    }
+    if (!dis) {
+        SDL_Color sel = COLOR_ACCENT;
+        SDL_SetRenderDrawColor(r, sel.r, sel.g, sel.b, sel.a);
+        SDL_Rect pr = {st->send_protocol == 0 ? 120 : 190, y, 60, 28};
+        SDL_RenderDrawRect(r, &pr);
+    }
     y += 40;
 
     /* IP + Port row */
@@ -512,20 +530,36 @@ static void render_receive_page(SDL_Renderer *r, struct app_state *st)
     int W = st->window_w;
     int y = 50;
 
-    ui_draw_text(r, "Save to:", 20, y + 4, COLOR_TEXT);
-    ui_draw_rect(r, 100, y, W - 260, 28, COLOR_SURFACE);
+    bool rdis = st->recv_running;
+    SDL_Color rftc = rdis ? COLOR_DIM : COLOR_TEXT;
+    SDL_Color rfbg = rdis ? COLOR_BG : COLOR_SURFACE;
+
+    ui_draw_text(r, "Save to:", 20, y + 4, rftc);
+    ui_draw_rect(r, 100, y, W - 260, 28, rfbg);
     ui_draw_text(r, st->recv_savepath[0] ? st->recv_savepath : "Click Browse...",
-                 106, y + 4, st->recv_savepath[0] ? COLOR_TEXT : COLOR_DIM);
-    ui_button(r, "Browse", W - 150, y, 80, 28, 0, 0, false);
+                 106, y + 4, st->recv_savepath[0] ? rftc : COLOR_DIM);
+    {
+        SDL_Color bb = rdis ? COLOR_DIM : COLOR_SURFACE;
+        SDL_Color bt = rdis ? COLOR_BG : COLOR_TEXT;
+        ui_draw_rect(r, W - 150, y, 80, 28, bb);
+        int tw, th; ui_text_size("Browse", &tw, &th);
+        ui_draw_text(r, "Browse", W - 150 + (80 - tw) / 2, y + (28 - th) / 2, bt);
+    }
     y += 40;
 
-    ui_draw_text(r, "Protocol:", 20, y + 4, COLOR_TEXT);
-    ui_button(r, "TCP", 120, y, 60, 28, 0, 0, false);
-    ui_button(r, "UDP", 190, y, 60, 28, 0, 0, false);
-    { SDL_Color sel = COLOR_ACCENT;
-      SDL_SetRenderDrawColor(r, sel.r, sel.g, sel.b, sel.a);
-      SDL_Rect pr = {st->recv_protocol == 0 ? 120 : 190, y, 60, 28};
-      SDL_RenderDrawRect(r, &pr); }
+    ui_draw_text(r, "Protocol:", 20, y + 4, rftc);
+    {
+        ui_draw_rect(r, 120, y, 60, 28, rfbg);
+        ui_draw_text(r, "TCP", 130, y + 4, rftc);
+        ui_draw_rect(r, 190, y, 60, 28, rfbg);
+        ui_draw_text(r, "UDP", 200, y + 4, rftc);
+    }
+    if (!rdis) {
+        SDL_Color sel = COLOR_ACCENT;
+        SDL_SetRenderDrawColor(r, sel.r, sel.g, sel.b, sel.a);
+        SDL_Rect pr = {st->recv_protocol == 0 ? 120 : 190, y, 60, 28};
+        SDL_RenderDrawRect(r, &pr);
+    }
     y += 40;
 
     /* IP + Port row */
@@ -770,8 +804,24 @@ bool ui_handle_event(SDL_Event *e, struct app_state *st)
             break;
 
         case TAB_SEND:
-            if (st->send_running) break;  /* all controls disabled during send */
-            /* Dir/File toggle */
+            /* Stop/Start button — always enabled */
+            if (ui_in_rect(mx, my, 20, 170, 160, 32)) {
+                if (st->send_running) {
+                    st->send_running = false;
+                    strncpy(st->status_text, "Send stopped by user", sizeof(st->status_text) - 1);
+                    return true;
+                } else if (st->send_filepath[0] && st->send_target_ip[0]) {
+                    st->send_running = true;
+                    st->send_progress_done = 0;
+                    st->send_progress_total = 0;
+                    st->active_input = 0;
+                    SDL_StopTextInput();
+                    strncpy(st->status_text, "Waiting for receiver...", sizeof(st->status_text) - 1);
+                    return true;
+                }
+            }
+            /* All other controls disabled during transfer */
+            if (st->send_running) break;
             if (ui_in_rect(mx, my, st->window_w - 260, 50, 50, 28)) {
                 st->send_is_dir = true; return true;
             }
@@ -794,27 +844,27 @@ bool ui_handle_event(SDL_Event *e, struct app_state *st)
                 if (ui_text_field_click(st, mx, my, 285, 130, 70, 28, 5, spbuf, st->send_running))
                     return true;
             }
-            if (ui_in_rect(mx, my, 20, 170, 160, 32)) {
-                if (st->send_running) {
-                    /* Stop button */
-                    st->send_running = false;
-                    strncpy(st->status_text, "Send stopped by user", sizeof(st->status_text) - 1);
-                    /* Cancel will be handled by main loop */
-                    return true;
-                } else if (st->send_filepath[0] && st->send_target_ip[0]) {
-                    st->send_running = true;
-                    st->send_progress_done = 0;
-                    st->send_progress_total = 0;
-                    st->active_input = 0;
-                    SDL_StopTextInput();
-                    strncpy(st->status_text, "Waiting for receiver...", sizeof(st->status_text) - 1);
-                    return true;
-                }
-            }
             break;
 
         case TAB_RECEIVE:
-            if (st->recv_running) break;  /* all controls disabled during recv */
+            /* Stop/Listen button — always enabled */
+            if (ui_in_rect(mx, my, 20, 170, 180, 32)) {
+                if (st->recv_running) {
+                    st->recv_running = false;
+                    strncpy(st->status_text, "Receive stopped by user", sizeof(st->status_text) - 1);
+                    return true;
+                } else if (st->recv_savepath[0] && st->recv_target_ip[0]) {
+                    st->recv_running = true;
+                    st->recv_progress_done = 0;
+                    st->recv_progress_total = 0;
+                    st->active_input = 0;
+                    SDL_StopTextInput();
+                    strncpy(st->status_text, "Waiting for sender...", sizeof(st->status_text) - 1);
+                    return true;
+                }
+            }
+            /* All other controls disabled during transfer */
+            if (st->recv_running) break;
             if (ui_in_rect(mx, my, st->window_w - 150, 50, 80, 28)) {
                 zenity_launch(st, "Select Save Directory", true, 2);
                 return true;
