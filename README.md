@@ -1,4 +1,5 @@
 # lanft — LAN File Transfer Tool
+
 [![Version](https://img.shields.io/badge/version-v1.0.0-blue.svg)](https://gitee.com/dzh258/lan-file-transfer/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Gitee stars](https://gitee.com/dzh258/lan-file-transfer/badge/star.svg?theme=dark)](https://gitee.com/dzh258/lan-file-transfer)
@@ -19,62 +20,23 @@ A fast, reliable LAN file transfer tool with both GUI (SDL2) and CLI modes. Supp
 - **LAN device scanner**: Multi-threaded TCP connect probe across all network interfaces
 - **Transfer history**: Persistent records with speed, progress, status saved to disk
 - **nc-style roles**: Receiver = server (listens), Sender = client (connects)
-- **Cross-platform**: Linux (x86_64, aarch64), Termux (Android), WSL
+- **Cross-platform**: Linux, Windows, macOS, Termux (Android)
 
 ---
 
-## Project Structure
+## Build Options
 
+| CMake Option | Default | Description |
+|-------------|---------|-------------|
+| `BUILD_GUI` | `ON` | Build with SDL2 GUI. Set `OFF` for CLI-only (no SDL2 dependency, smaller binary). |
+
+```bash
+# Full build (GUI + CLI)
+cmake .. -DBUILD_GUI=ON
+
+# CLI-only (no SDL2, ideal for servers/embedded)
+cmake .. -DBUILD_GUI=OFF
 ```
-websocket/
-├── CMakeLists.txt              # Build system
-├── README.md
-├── .gitignore
-├── docs/
-│   └── superpowers/
-│       ├── specs/              # Design specifications
-│       └── plans/              # Implementation plans
-└── src/
-    ├── main.c                  # Entry point, SDL event loop, thread spawning
-    ├── cli.c                   # CLI argument parsing & terminal transfer
-    ├── network.h / network.c   # libwebsockets raw TCP + plain BSD UDP
-    ├── scanner.h / scanner.c   # Multi-threaded LAN TCP Connect scanner
-    ├── transfer.h / transfer.c # File send/recv, meta handshake, resume, compression
-    ├── protocol.h              # Shared constants, structs, event types
-    └── ui.h / ui.c             # SDL2 GUI: tabs, buttons, text fields, progress bars
-```
-
-### Module Responsibilities
-
-| Module | Purpose | Dependencies |
-|--------|---------|-------------|
-| `main.c` | SDL2 window, event loop, tab state, thread dispatch | ui, network, scanner, transfer |
-| `cli.c` | CLI arg parsing (`getopt_long`), progress bar, sync transfer | network, transfer |
-| `network.c` | TCP via lws raw socket; UDP via BSD `sendto`/`recvfrom` | libwebsockets, protocol.h |
-| `scanner.c` | Collects all non-loopback /24 subnets, 32-thread TCP connect scan | pthreads, SDL (events) |
-| `transfer.c` | Meta handshake, chunked send/recv, resume offset, libarchive compression | network.h, protocol.h, libarchive |
-| `ui.c` | Tabbed pages (Scan/Send/Recv/History), text fields, progress bars, 8x16 bitmap font | SDL2 |
-| `protocol.h` | Magic bytes, default port, packet headers, event payload structs | — |
-
----
-
-## Dependencies
-
-### Required
-
-| Library | Version | Purpose |
-|---------|---------|---------|
-| SDL2 | ≥ 2.0 | GUI rendering & event handling |
-| libwebsockets | ≥ 4.0 | TCP raw socket management |
-| libarchive | ≥ 3.0 | Directory compression/extraction (tar.gz) |
-| pthreads | (system) | Multi-threading |
-| CMake | ≥ 3.10 | Build system |
-
-### Optional (CLI only — no GUI deps needed)
-
-| Tool | Purpose |
-|------|---------|
-| `getopt_long` | Argument parsing (glibc built-in) |
 
 ---
 
@@ -83,15 +45,18 @@ websocket/
 ### Linux (Debian/Ubuntu)
 
 ```bash
-# Install build dependencies
+# Prerequisites
 sudo apt install -y build-essential cmake git \
     libsdl2-dev libwebsockets-dev libarchive-dev
 
-# Clone and build
-git clone <repo-url> lanft
-cd lanft
-mkdir build && cd build
+# Build (GUI)
+git clone https://github.com/Spinach5/lan-file-transfer.git lanft
+cd lanft && mkdir build && cd build
 cmake .. -DCMAKE_BUILD_TYPE=Release
+make -j$(nproc)
+
+# CLI-only
+cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_GUI=OFF
 make -j$(nproc)
 
 # Install (optional)
@@ -103,15 +68,63 @@ sudo cp lanft /usr/local/bin/
 ```bash
 sudo dnf install -y gcc cmake git \
     SDL2-devel libwebsockets-devel libarchive-devel
-# ... same build steps as above
+# Same build steps as Debian/Ubuntu
 ```
 
-### Arch Linux
+### Linux (Arch)
 
 ```bash
 sudo pacman -S --needed base-devel cmake git \
     sdl2 libwebsockets libarchive
-# ... same build steps as above
+# Same build steps as above
+```
+
+### Windows (MinGW-w64 via MSYS2)
+
+```bash
+# Prerequisites (MSYS2 UCRT64 terminal)
+pacman -S mingw-w64-ucrt-x86_64-{cmake,make,gcc,git} \
+          mingw-w64-ucrt-x86_64-{SDL2,libwebsockets,libarchive}
+
+# Build (GUI)
+git clone https://github.com/Spinach5/lan-file-transfer.git lanft
+cd lanft && mkdir build && cd build
+cmake .. -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release
+make -j$(nproc)
+
+# CLI-only (no SDL2 needed)
+cmake .. -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release -DBUILD_GUI=OFF
+make -j$(nproc)
+```
+
+### Windows (MSVC + vcpkg)
+
+```powershell
+# Prerequisites
+vcpkg install sdl2 libwebsockets libarchive
+
+# Build (GUI)
+git clone https://github.com/Spinach5/lan-file-transfer.git lanft
+cd lanft && mkdir build && cd build
+cmake .. -DCMAKE_TOOLCHAIN_FILE=%VCPKG_ROOT%/scripts/buildsystems/vcpkg.cmake
+cmake --build . --config Release
+
+# CLI-only
+cmake .. -DBUILD_GUI=OFF -DCMAKE_TOOLCHAIN_FILE=%VCPKG_ROOT%/scripts/buildsystems/vcpkg.cmake
+cmake --build . --config Release
+```
+
+### macOS (Homebrew)
+
+```bash
+# Prerequisites
+brew install cmake sdl2 libwebsockets libarchive
+
+# Build
+git clone https://github.com/Spinach5/lan-file-transfer.git lanft
+cd lanft && mkdir build && cd build
+cmake .. -DCMAKE_BUILD_TYPE=Release
+make -j$(nproc)
 ```
 
 ### Termux (Android)
@@ -121,7 +134,6 @@ pkg update && pkg upgrade
 pkg install cmake make clang git binutils \
     sdl2 libwebsockets libarchive termux-x11
 
-# Build
 cd lanft && mkdir build && cd build
 cmake .. -DCMAKE_BUILD_TYPE=Release
 make -j$(nproc)
@@ -134,9 +146,70 @@ export DISPLAY=:0
 
 ---
 
+## Project Structure
+
+```
+websocket/
+├── CMakeLists.txt              # Build system
+├── README.md
+├── .gitignore
+└── src/
+    ├── main.c                  # SDL GUI entry point & event loop
+    ├── main_cli.c              # CLI-only entry point (BUILD_GUI=OFF)
+    ├── cli.c                   # CLI argument parsing & terminal transfer
+    ├── compat.h                # Cross-platform compatibility (BSD/Winsock)
+    ├── network.h / network.c   # libwebsockets raw TCP + plain BSD UDP
+    ├── scanner.h / scanner.c   # Multi-threaded LAN TCP Connect scanner
+    ├── transfer.h / transfer.c # File send/recv, meta handshake, resume
+    ├── protocol.h              # Shared constants, structs, event types
+    └── ui.h / ui.c             # SDL2 GUI: tabs, buttons, progress bars
+```
+
+### Module Responsibilities
+
+| Module | Purpose | Dependencies |
+|--------|---------|-------------|
+| `main.c` | SDL2 window, event loop, tab state, thread dispatch | ui, network, scanner, transfer |
+| `main_cli.c` | Minimal main for CLI-only builds (no SDL2) | cli |
+| `cli.c` | CLI arg parsing (`getopt_long`), progress bar, sync transfer | network, transfer |
+| `compat.h` | Cross-platform abstractions (socket_t, Winsock, sleep, gettimeofday) | — |
+| `network.c` | TCP via lws raw socket; UDP via BSD `sendto`/`recvfrom` | libwebsockets, protocol.h |
+| `scanner.c` | Collects all non-loopback subnets, 32-thread TCP connect scan | pthreads |
+| `transfer.c` | Meta handshake, chunked send/recv, resume offset, libarchive compression | network.h, protocol.h, libarchive |
+| `ui.c` | Tabbed pages (Scan/Send/Recv/History), text fields, progress bars, 8×16 bitmap font | SDL2 |
+| `protocol.h` | Magic bytes, default port, packet headers, event payload structs | — |
+
+### Files Compiled by Mode
+
+| Source | BUILD_GUI=ON | BUILD_GUI=OFF |
+|--------|:---:|:---:|
+| `main.c` | ✅ | — |
+| `main_cli.c` | — | ✅ |
+| `ui.c` | ✅ | — |
+| `scanner.c` | ✅ | — |
+| `cli.c` | ✅ | ✅ |
+| `network.c` | ✅ | ✅ |
+| `transfer.c` | ✅ | ✅ |
+| **Binary size** | ~60 KB | ~40 KB |
+| **SDK2 linked** | Yes | No |
+
+---
+
+## Dependencies
+
+| Library | Required | Version | Purpose |
+|---------|:---:|---------|---------|
+| SDL2 | GUI only | ≥ 2.0 | GUI rendering & event handling |
+| libwebsockets | Yes | ≥ 4.0 | TCP raw socket management |
+| libarchive | Yes | ≥ 3.0 | Directory compression/extraction (tar.gz) |
+| pthreads | Yes | (system) | Multi-threading |
+| CMake | Yes | ≥ 3.10 | Build system |
+
+---
+
 ## Usage
 
-### GUI Mode (no arguments)
+### GUI Mode
 
 ```bash
 ./lanft
@@ -147,56 +220,47 @@ Opens SDL2 window with four tabs:
 | Tab | Function |
 |-----|----------|
 | **Scan Devices** | Scan LAN for other lanft instances. Configurable port. Click a device to auto-fill its IP. |
-| **Send File** | Select file/directory, choose Dir/File mode, enter **receiver IP**, Start Send. Stop or Esc to cancel. |
-| **Receive File** | Select save path, **Listen IP** defaults to `0.0.0.0`. Listen & Receive. Stop or Esc to cancel. |
-| **History** | Table of past transfers with name, time, duration, kind, port, status, progress, speed. |
+| **Send File** | Select file/directory, choose Dir/File mode, enter **receiver IP**, Start Send. |
+| **Receive File** | Select save path, **Listen IP** defaults to `0.0.0.0`. Listen & Receive. |
+| **History** | Table of past transfers: name, time, duration, kind, port, status, progress, speed. |
 
 **Typical workflow:**
-1. Receiver: Receive File → Browse save dir → Listen & Receive (waits for sender)
+1. Receiver: Receive File → Browse save dir → Listen & Receive
 2. Sender: Send File → Browse file → enter receiver IP → Start Send
 3. Both sides show progress bar; completion logged to History
 
-### CLI Mode (any arguments)
+### CLI Mode
 
 ```bash
-# Send a file (TCP, default port 9876)
+# Send
 lanft --mode=S --address=192.168.1.100 ./report.pdf
-
-# Send a directory (UDP, custom port)
+lanft -S -p 1234 ./video.mp4
 lanft --protocol=UDP --mode=S --address=10.0.0.5 -p 5555 /home/user/docs/
 
-# Short options: send
-lanft -S -p 1234 ./video.mp4
-
-# Receive (listen on 0.0.0.0:9876, save to ./downloads/)
+# Receive
 lanft --mode=R ./downloads/
-
-# Receive on specific interface and port
+lanft -R -p 5555 ./received/
 lanft --mode=R --address=10.84.183.2 -p 5555 ./received/
 
-# Show help
+# Info
 lanft --help
-
-# Show version
 lanft --version
-
-# Show transfer history
 lanft --history
 ```
 
-### Options Reference
+### Options
 
 | Short | Long | Default | Description |
 |-------|------|---------|-------------|
 | `-h` | `--help` | — | Print help and exit |
 | `-v` | `--version` | — | Print version and exit |
-| `-S` | `--mode=S` | *(required)* | Shorthand for `--mode=S` (send) |
-| `-R` | `--mode=R` | *(required)* | Shorthand for `--mode=R` (receive) |
+| `-S` | — | — | Shorthand for `--mode=S` (send) |
+| `-R` | — | — | Shorthand for `--mode=R` (receive) |
 | | `--mode=S\|R` | *(required)* | Transfer mode |
 | | `--protocol=TCP\|UDP` | TCP | Transport protocol |
 | `-p` | `--port=NUM` | 9876 | Port number |
 | | `--address=IP` | `0.0.0.0` | Send: receiver IP. Recv: listen IP |
-| | `--history` | — | Print history table and exit |
+| | `--history` | — | Print history table |
 
 ---
 
@@ -204,10 +268,10 @@ lanft --history
 
 ### Protocol
 
-1. **Meta handshake** (270 bytes): magic `FT01`, protocol type, filename, total size, flags (directory indicator)
-2. **Meta response** (16 bytes): magic + resume offset
+1. **Meta handshake**: magic `FT01`, protocol type, filename, total size, flags
+2. **Meta response**: magic + resume offset
 3. **Data transfer**: raw bytes (TCP) or chunked packets with ACK (UDP)
-4. If flags indicate directory, the data is a `.tar.gz` archive auto-extracted on receive
+4. Directory mode: data is a `.tar.gz` archive auto-extracted on receive
 
 ### Role Model (nc-style)
 
@@ -216,24 +280,7 @@ Receiver (server):  net_listen → net_accept → receive meta → receive data
 Sender   (client):  net_connect → send meta → read response → send data
 ```
 
-### Scanner
-
-- Reads all non-loopback network interfaces via `getifaddrs()`
-- Extracts /24 subnet from each IP
-- Spawns 32 threads, each probing IPs via non-blocking TCP connect + 800ms `select()` timeout
-- Works across LAN, WiFi, VPN (tun), and virtual bridges
-
-### Resume
-
-- Sender sends file metadata including total size
-- Receiver checks local filesystem for existing partial file
-- If found and smaller, replies with current byte offset
-- Sender seeks to offset and resumes streaming
-- Works for both TCP and UDP
-
----
-
-## Exit Codes (CLI)
+### Exit Codes
 
 | Code | Meaning |
 |------|---------|
@@ -245,6 +292,3 @@ Sender   (client):  net_connect → send meta → read response → send data
 ## License
 
 MIT
-
-## Star History
-[![Star History Chart](https://api.star-history.com/chart?repos=Spinach5/lan-file-transfer&type=date&logscale&legend=top-left)](https://www.star-history.com/?repos=Spinach5%2Flan-file-transfer&type=date&logscale=&legend=top-left)
