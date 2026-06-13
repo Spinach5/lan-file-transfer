@@ -56,6 +56,9 @@ bool net_has_error(struct net_context *nc);
 /* Get the internal lws wsi pointer (for direct access if needed) */
 void *net_get_wsi(struct net_context *nc);
 
+/* Get the socket fd for direct I/O */
+int net_get_fd(struct net_context *nc);
+
 /* Destroy and free */
 void net_destroy(struct net_context *nc);
 

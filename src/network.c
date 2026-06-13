@@ -364,6 +364,11 @@ void *net_get_wsi(struct net_context *nc)
     return nc->wsi;
 }
 
+int net_get_fd(struct net_context *nc)
+{
+    return nc->sock_fd;
+}
+
 /* ── Cleanup ───────────────────────────────────────────────── */
 
 void net_destroy(struct net_context *nc)

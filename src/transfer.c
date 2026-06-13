@@ -72,35 +72,55 @@ static int send_meta(struct net_context *nc, const char *filename,
 
 /* ── TCP Send ──────────────────────────────────────────────── */
 
-/* ── Meta response receiver (used by sender to get resume_offset) ── */
+/* ── TCP send with direct socket I/O ──────────────────────── */
 
-struct meta_resp_state {
-    struct ft_meta_resp resp;
-    size_t pos;
-    bool done;
-};
-
-static void meta_resp_rx_cb(void *user, const void *data, size_t len)
+static int sock_read_full(int fd, void *buf, size_t len, int timeout_ms)
 {
-    struct meta_resp_state *st = (struct meta_resp_state *)user;
-    if (!st || st->done) return;
-    size_t to_copy = len;
-    size_t remaining = sizeof(struct ft_meta_resp) - st->pos;
-    if (to_copy > remaining) to_copy = remaining;
-    memcpy((uint8_t *)&st->resp + st->pos, data, to_copy);
-    st->pos += to_copy;
-    if (st->pos >= sizeof(struct ft_meta_resp))
-        st->done = true;
+    size_t received = 0;
+    uint8_t *p = (uint8_t *)buf;
+    while (received < len) {
+        fd_set fds;
+        FD_ZERO(&fds);
+        FD_SET(fd, &fds);
+        struct timeval tv;
+        tv.tv_sec = timeout_ms / 1000;
+        tv.tv_usec = (timeout_ms % 1000) * 1000;
+        int ret = select(fd + 1, &fds, NULL, NULL, &tv);
+        if (ret <= 0) return -1;
+        ssize_t n = read(fd, p + received, len - received);
+        if (n <= 0) return -1;
+        received += n;
+    }
+    return 0;
+}
+
+static int sock_write_full(int fd, const void *buf, size_t len)
+{
+    size_t sent = 0;
+    const uint8_t *p = (const uint8_t *)buf;
+    while (sent < len) {
+        fd_set fds;
+        FD_ZERO(&fds);
+        FD_SET(fd, &fds);
+        /* Wait up to 5s for writability */
+        struct timeval tv = {5, 0};
+        int ret = select(fd + 1, NULL, &fds, NULL, &tv);
+        if (ret <= 0) return -1;
+        ssize_t n = write(fd, p + sent, len - sent);
+        if (n <= 0) return -1;
+        sent += n;
+    }
+    return 0;
 }
 
 static void tcp_send_file(struct net_context *nc, const char *filepath,
                           uint64_t resume_offset)
 {
+    int fd = net_get_fd(nc);
+    if (fd < 0) { push_error("No socket"); return; }
+
     FILE *fp = fopen(filepath, "rb");
-    if (!fp) {
-        push_error("Cannot open file: %s", filepath);
-        return;
-    }
+    if (!fp) { push_error("Cannot open file: %s", filepath); return; }
 
     fseek(fp, 0, SEEK_END);
     uint64_t total = (uint64_t)ftell(fp);
@@ -108,31 +128,29 @@ static void tcp_send_file(struct net_context *nc, const char *filepath,
     const char *fname = strrchr(filepath, '/');
     if (fname) fname++; else fname = filepath;
 
-    /* Set up RX callback to capture the meta response */
-    struct meta_resp_state mrs;
-    memset(&mrs, 0, sizeof(mrs));
-    net_set_rx_cb(nc, meta_resp_rx_cb, &mrs);
+    /* Send meta */
+    struct ft_meta meta;
+    memset(&meta, 0, sizeof(meta));
+    meta.magic = FT_MAGIC;
+    meta.protocol = FT_PROTO_TCP;
+    meta.name_len = (uint8_t)strlen(fname);
+    strncpy(meta.filename, fname, sizeof(meta.filename) - 1);
+    meta.total_size = total;
 
-    if (send_meta(nc, fname, total, FT_PROTO_TCP) != 0) {
+    if (sock_write_full(fd, &meta, sizeof(meta)) != 0) {
         push_error("Failed to send file metadata");
         fclose(fp);
         return;
     }
 
-    /* Wait for meta response from receiver (with timeout) */
-    {
-        int timeout = 0;
-        while (!mrs.done && net_is_connected(nc) && timeout < 200) {
-            net_service(nc, 50);
-            timeout++;
-        }
-
-        if (mrs.done && mrs.resp.magic == FT_MAGIC) {
-            resume_offset = mrs.resp.resume_offset;
-        }
+    /* Read meta response */
+    struct ft_meta_resp resp;
+    if (sock_read_full(fd, &resp, sizeof(resp), 10000) == 0 &&
+        resp.magic == FT_MAGIC) {
+        resume_offset = resp.resume_offset;
     }
 
-    /* If receiver already has the complete file, skip transfer */
+    /* If receiver already has the complete file, skip */
     if (resume_offset >= total) {
         push_xfer_done();
         fclose(fp);
@@ -142,22 +160,18 @@ static void tcp_send_file(struct net_context *nc, const char *filepath,
     fseek(fp, (long)resume_offset, SEEK_SET);
     uint64_t sent = resume_offset;
 
-    /* Restore RX callback to NULL for data phase (sender doesn't need RX during send) */
-    net_set_rx_cb(nc, NULL, NULL);
-
     uint8_t buf[FT_TCP_CHUNK_SIZE];
-    while (sent < total && net_is_connected(nc)) {
+    while (sent < total) {
         size_t to_read = (total - sent) > FT_TCP_CHUNK_SIZE
                          ? FT_TCP_CHUNK_SIZE : (size_t)(total - sent);
         size_t n = fread(buf, 1, to_read, fp);
         if (n == 0) break;
 
-        net_send(nc, buf, n);
-
-        /* Wait for TX to drain */
-        for (int w = 0; w < 40 && net_is_connected(nc); w++) {
-            net_service(nc, 25);
-            if (!net_tx_pending(nc)) break;
+        if (sock_write_full(fd, buf, n) != 0) {
+            push_error("Send failed at %lu / %lu bytes",
+                       (unsigned long)sent, (unsigned long)total);
+            fclose(fp);
+            return;
         }
 
         sent += n;
@@ -166,144 +180,100 @@ static void tcp_send_file(struct net_context *nc, const char *filepath,
 
     fclose(fp);
 
-    /* Final flush */
-    for (int i = 0; i < 40; i++) net_service(nc, 25);
-
-    if (sent >= total) {
-        push_xfer_done();
-    } else if (net_is_connected(nc)) {
-        push_error("Transfer interrupted at %lu / %lu bytes",
-                   (unsigned long)sent, (unsigned long)total);
-    }
+    if (sent >= total) push_xfer_done();
 }
 
-/* ── TCP Receive (state machine via RX callback) ───────────── */
-
-struct tcp_recv_state {
-    int phase;              /* 0=meta, 1=meta_done_wait, 2=data */
-    struct ft_meta meta;
-    size_t meta_pos;
-    FILE *fp;
-    uint64_t received;
-    uint64_t total_size;
-    bool done;
-};
-
-static void tcp_recv_rx_cb(void *user, const void *data, size_t len)
-{
-    struct tcp_recv_state *st = (struct tcp_recv_state *)user;
-    if (!st) return;
-
-    if (st->phase == 0) {
-        /* Collecting meta bytes */
-        size_t to_copy = len;
-        size_t remaining = sizeof(struct ft_meta) - st->meta_pos;
-        if (to_copy > remaining) to_copy = remaining;
-        memcpy((uint8_t *)&st->meta + st->meta_pos, data, to_copy);
-        st->meta_pos += to_copy;
-        if (st->meta_pos >= sizeof(struct ft_meta)) {
-            st->phase = 1;  /* meta complete, signal main loop */
-        }
-    } else if (st->phase == 2 && st->fp) {
-        /* Writing file data */
-        fwrite(data, 1, len, st->fp);
-        st->received += len;
-    }
-}
-
-static void tcp_close_cb(void *user)
-{
-    struct tcp_recv_state *st = (struct tcp_recv_state *)user;
-    if (st) st->done = true;
-}
+/* ── TCP receive with direct socket I/O ───────────────────── */
 
 static void tcp_recv_file(struct net_context *nc, const char *savepath)
 {
-    struct tcp_recv_state st;
-    memset(&st, 0, sizeof(st));
-    st.phase = 0;
+    int fd = net_get_fd(nc);
+    if (fd < 0) { push_error("No socket"); return; }
 
-    net_set_rx_cb(nc, tcp_recv_rx_cb, &st);
-    net_set_close_cb(nc, tcp_close_cb, &st);
-
-    /* Phase 1: wait for meta to arrive */
-    int timeout = 0;
-    while (st.phase == 0 && net_is_connected(nc) && !st.done && timeout < 500) {
-        net_service(nc, 50);
-        timeout++;
-    }
-
-    if (st.phase == 0) {
+    /* Read meta */
+    struct ft_meta meta;
+    if (sock_read_full(fd, &meta, sizeof(meta), 30000) != 0) {
         push_error("Failed to receive file metadata (timeout)");
         return;
     }
 
-    struct ft_meta *meta = &st.meta;
-    if (meta->magic != FT_MAGIC) {
+    if (meta.magic != FT_MAGIC) {
         push_error("Protocol mismatch — bad magic bytes");
         return;
     }
 
     /* Determine output path */
     char fullpath[1024];
-    snprintf(fullpath, sizeof(fullpath), "%s/%s", savepath, meta->filename);
+    snprintf(fullpath, sizeof(fullpath), "%s/%s", savepath, meta.filename);
 
     uint64_t local_size = file_size(fullpath);
     uint64_t resume_offset = 0;
     const char *mode = "wb";
 
-    if (local_size > 0 && local_size < meta->total_size) {
+    if (local_size > 0 && local_size < meta.total_size) {
         resume_offset = local_size;
         mode = "ab";
-    } else if (local_size >= meta->total_size) {
+    } else if (local_size >= meta.total_size) {
+        /* Already complete — tell sender and done */
         struct ft_meta_resp resp;
-        memset(&resp, 0, sizeof(resp));
         resp.magic = FT_MAGIC;
-        resp.resume_offset = meta->total_size;
-        net_send(nc, &resp, sizeof(resp));
-        for (int i = 0; i < 10; i++) net_service(nc, 50);
+        resp.resume_offset = meta.total_size;
+        sock_write_full(fd, &resp, sizeof(resp));
         push_xfer_done();
         return;
     }
 
-    /* Send meta response with resume offset */
+    /* Send meta response */
     struct ft_meta_resp resp;
     memset(&resp, 0, sizeof(resp));
     resp.magic = FT_MAGIC;
     resp.resume_offset = resume_offset;
-    net_send(nc, &resp, sizeof(resp));
-    for (int i = 0; i < 10; i++) net_service(nc, 50);
+    if (sock_write_full(fd, &resp, sizeof(resp)) != 0) {
+        push_error("Failed to send meta response");
+        return;
+    }
 
-    /* Open file */
-    st.fp = fopen(fullpath, mode);
-    if (!st.fp) {
+    /* Open file for writing */
+    FILE *fp = fopen(fullpath, mode);
+    if (!fp) {
         push_error("Cannot create file: %s", fullpath);
         return;
     }
-    st.received = resume_offset;
-    st.total_size = meta->total_size;
-    st.phase = 2;   /* switch to data reception */
-    st.done = false;
 
-    /* Phase 2: receive file data */
-    while (st.received < st.total_size && net_is_connected(nc) && !st.done) {
-        net_service(nc, 100);
-        if (st.received > 0 && st.received % (FT_TCP_CHUNK_SIZE / 2) == 0) {
-            push_progress(st.received, st.total_size);
+    uint64_t received = resume_offset;
+
+    /* Receive file data */
+    uint8_t buf[FT_TCP_CHUNK_SIZE];
+    while (received < meta.total_size) {
+        size_t to_read = (meta.total_size - received) > FT_TCP_CHUNK_SIZE
+                         ? FT_TCP_CHUNK_SIZE : (size_t)(meta.total_size - received);
+
+        fd_set fds;
+        FD_ZERO(&fds);
+        FD_SET(fd, &fds);
+        struct timeval tv = {30, 0};  /* 30s timeout */
+        if (select(fd + 1, &fds, NULL, NULL, &tv) <= 0) {
+            push_error("Receive timeout at %lu / %lu bytes",
+                       (unsigned long)received, (unsigned long)meta.total_size);
+            fclose(fp);
+            return;
         }
+
+        ssize_t n = read(fd, buf, to_read);
+        if (n <= 0) {
+            push_error("Receive failed at %lu / %lu bytes",
+                       (unsigned long)received, (unsigned long)meta.total_size);
+            fclose(fp);
+            return;
+        }
+
+        fwrite(buf, 1, n, fp);
+        received += n;
+        push_progress(received, meta.total_size);
     }
 
-    /* Final progress update */
-    push_progress(st.received, st.total_size);
-
-    if (st.fp) fclose(st.fp);
-
-    if (st.received >= st.total_size) {
-        push_xfer_done();
-    } else if (net_is_connected(nc)) {
-        push_error("Transfer interrupted at %lu / %lu bytes",
-                   (unsigned long)st.received, (unsigned long)st.total_size);
-    }
+    fclose(fp);
+    push_xfer_done();
 }
 
 /* ── UDP Send ──────────────────────────────────────────────── */
