@@ -16,6 +16,9 @@
    Transfer thread wrappers
    ═══════════════════════════════════════════════════════════ */
 
+static struct net_context *active_nc = NULL;
+static bool transfer_stopped = false;
+
 typedef struct {
     struct net_context *nc;
     char filepath[1024];
@@ -90,6 +93,8 @@ static void start_send(struct app_state *state)
     strncpy(args->filepath, state->send_filepath, sizeof(args->filepath) - 1);
     args->protocol = state->send_protocol;
 
+    active_nc = nc;
+    transfer_stopped = false;
     pthread_t tid;
     pthread_create(&tid, NULL, send_thread_func, args);
     pthread_detach(tid);
@@ -137,6 +142,8 @@ static void start_recv(struct app_state *state)
     strncpy(args->savepath, state->recv_savepath, sizeof(args->savepath) - 1);
     args->protocol = state->recv_protocol;
 
+    active_nc = nc;
+    transfer_stopped = false;
     pthread_t tid;
     pthread_create(&tid, NULL, recv_thread_func, args);
     pthread_detach(tid);
@@ -223,7 +230,11 @@ int main(int argc, char **argv)
                 if (event.key.keysym.sym == SDLK_ESCAPE) {
                     if (state.modal_visible)
                         state.modal_visible = false;
-                    else {
+                    else if (state.send_running || state.recv_running) {
+                        /* Cancel active transfer */
+                        if (active_nc) net_cancel(active_nc);
+                        transfer_stopped = true;
+                    } else {
                         state.active_input = 0;
                         SDL_StopTextInput();
                     }
@@ -304,6 +315,7 @@ int main(int argc, char **argv)
                 state.recv_running = false;
                 pending_send = false;
                 pending_recv = false;
+                active_nc = NULL;
                 strncpy(state.status_text, "Transfer complete!", sizeof(state.status_text) - 1);
                 break;
             }
@@ -352,6 +364,7 @@ int main(int argc, char **argv)
                     state.recv_running = false;
                     pending_send = false;
                     pending_recv = false;
+                    active_nc = NULL;
                     snprintf(state.status_text, sizeof(state.status_text), "Error: %s", evt->message);
                 }
                 free(evt);
@@ -365,6 +378,16 @@ int main(int argc, char **argv)
         }
 
         /* ── Detect send/receive start requests ────────── */
+
+        /* Cancel if user clicked Stop */
+        if (!state.send_running && pending_send && active_nc) {
+            net_cancel(active_nc);
+            pending_send = false;
+        }
+        if (!state.recv_running && pending_recv && active_nc) {
+            net_cancel(active_nc);
+            pending_recv = false;
+        }
 
         if (state.send_running && !pending_send && state.send_progress_total == 0) {
             fprintf(stderr, "[MAIN] Starting send: file=%s, target=%s, port=%d, proto=%d\n",

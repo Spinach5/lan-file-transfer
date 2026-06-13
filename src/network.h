@@ -59,6 +59,10 @@ void *net_get_wsi(struct net_context *nc);
 /* Get the socket fd for direct I/O */
 int net_get_fd(struct net_context *nc);
 
+/* Signal cancellation — causes net_accept() and transfer loops to stop */
+void net_cancel(struct net_context *nc);
+bool net_is_cancelled(struct net_context *nc);
+
 /* Destroy and free */
 void net_destroy(struct net_context *nc);
 

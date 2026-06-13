@@ -700,7 +700,13 @@ void transfer_send(struct net_context *nc, const char *filepath, int protocol)
         while (attempt < 50) {
             attempt++;
             fprintf(stderr, "[SEND] calling net_accept... (attempt %d)\n", attempt);
-            if (net_accept(nc) != 0) {
+            int ar = net_accept(nc);
+            if (ar == -2) {
+                fprintf(stderr, "[SEND] net_accept cancelled\n");
+                push_xfer_done();  /* signal stopped state */
+                return;
+            }
+            if (ar != 0) {
                 fprintf(stderr, "[SEND] net_accept FAILED\n");
                 push_error("Failed to accept client connection");
                 return;

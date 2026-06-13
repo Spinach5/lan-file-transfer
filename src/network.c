@@ -43,6 +43,9 @@ struct net_context {
     int udp_fd;
     struct sockaddr_in udp_peer;
     bool udp_bound;
+
+    /* Cancel flag */
+    volatile bool cancelled;
 };
 
 /* ── lws raw protocol callback ─────────────────────────────── */
@@ -189,22 +192,33 @@ int net_listen(struct net_context *nc, int port)
 
 int net_accept(struct net_context *nc)
 {
-    struct sockaddr_in client;
-    socklen_t len = sizeof(client);
-    nc->sock_fd = accept(nc->listen_fd, (struct sockaddr *)&client, &len);
-    if (nc->sock_fd < 0) return -1;
+    while (!nc->cancelled) {
+        fd_set rfds;
+        FD_ZERO(&rfds);
+        FD_SET(nc->listen_fd, &rfds);
+        struct timeval tv = {0, 500000};
+        int ret = select(nc->listen_fd + 1, &rfds, NULL, NULL, &tv);
+        if (ret < 0) return -1;
+        if (ret == 0) continue;
 
-    lws_sock_file_fd_type fd;
-    fd.sockfd = nc->sock_fd;
-    nc->wsi = lws_adopt_descriptor_vhost(nc->vhost, LWS_ADOPT_RAW_FILE_DESC,
-                                          fd, "raw", NULL);
-    if (!nc->wsi) {
-        close(nc->sock_fd);
-        nc->sock_fd = -1;
-        return -1;
+        struct sockaddr_in client;
+        socklen_t len = sizeof(client);
+        nc->sock_fd = accept(nc->listen_fd, (struct sockaddr *)&client, &len);
+        if (nc->sock_fd < 0) return -1;
+
+        lws_sock_file_fd_type fd;
+        fd.sockfd = nc->sock_fd;
+        nc->wsi = lws_adopt_descriptor_vhost(nc->vhost, LWS_ADOPT_RAW_FILE_DESC,
+                                              fd, "raw", NULL);
+        if (!nc->wsi) {
+            close(nc->sock_fd);
+            nc->sock_fd = -1;
+            return -1;
+        }
+        nc->connected = true;
+        return 0;
     }
-    nc->connected = true;
-    return 0;
+    return -2;
 }
 
 int net_connect(struct net_context *nc, const char *ip, int port)
@@ -367,6 +381,16 @@ void *net_get_wsi(struct net_context *nc)
 int net_get_fd(struct net_context *nc)
 {
     return nc->sock_fd;
+}
+
+void net_cancel(struct net_context *nc)
+{
+    if (nc) nc->cancelled = true;
+}
+
+bool net_is_cancelled(struct net_context *nc)
+{
+    return nc ? nc->cancelled : false;
 }
 
 /* ── Cleanup ───────────────────────────────────────────────── */

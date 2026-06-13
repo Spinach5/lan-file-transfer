@@ -463,14 +463,13 @@ static void render_send_page(SDL_Renderer *r, struct app_state *st)
     }
     y += 40;
 
-    /* Send button */
+    /* Send/Stop button */
     {
-        bool en = st->send_filepath[0] && st->send_target_ip[0] && !st->send_running;
-        SDL_Color bg = en ? COLOR_ACCENT : COLOR_SURFACE;
-        SDL_Color tc = en ? COLOR_BG : COLOR_DIM;
-        ui_draw_rect(r, 20, y, 160, 32, bg);
-        int tw, th; ui_text_size("Start Send", &tw, &th);
-        ui_draw_text(r, "Start Send", 20 + (160 - tw) / 2, y + (32 - th) / 2, tc);
+        ui_draw_rect(r, 20, y, 160, 32, st->send_running ? COLOR_ERROR : COLOR_ACCENT);
+        int tw, th;
+        const char *label = st->send_running ? "Stop Sending" : "Start Send";
+        ui_text_size(label, &tw, &th);
+        ui_draw_text(r, label, 20 + (160 - tw) / 2, y + (32 - th) / 2, COLOR_BG);
     }
     y += 50;
 
@@ -531,14 +530,13 @@ static void render_receive_page(SDL_Renderer *r, struct app_state *st)
     }
     y += 40;
 
-    /* Listen button */
+    /* Listen/Stop button */
     {
-        bool en = st->recv_savepath[0] && st->recv_target_ip[0] && !st->recv_running;
-        SDL_Color bg = en ? COLOR_ACCENT : COLOR_SURFACE;
-        SDL_Color tc = en ? COLOR_BG : COLOR_DIM;
-        ui_draw_rect(r, 20, y, 180, 32, bg);
-        int tw, th; ui_text_size("Listen & Receive", &tw, &th);
-        ui_draw_text(r, "Listen & Receive", 20 + (180 - tw) / 2, y + (32 - th) / 2, tc);
+        ui_draw_rect(r, 20, y, 180, 32, st->recv_running ? COLOR_ERROR : COLOR_ACCENT);
+        int tw, th;
+        const char *label = st->recv_running ? "Stop Listening" : "Listen & Receive";
+        ui_text_size(label, &tw, &th);
+        ui_draw_text(r, label, 20 + (180 - tw) / 2, y + (32 - th) / 2, COLOR_BG);
     }
     y += 50;
 
@@ -780,16 +778,22 @@ bool ui_handle_event(SDL_Event *e, struct app_state *st)
                 if (ui_text_field_click(st, mx, my, 285, 130, 70, 28, 5, spbuf))
                     return true;
             }
-            if (ui_in_rect(mx, my, 20, 170, 160, 32) &&
-                st->send_filepath[0] && st->send_target_ip[0] && !st->send_running) {
-                /* Main loop will detect send_running=true and spawn thread */
-                st->send_running = true;
-                st->send_progress_done = 0;
-                st->send_progress_total = 0;
-                st->active_input = 0;
-                SDL_StopTextInput();
-                strncpy(st->status_text, "Connecting...", sizeof(st->status_text) - 1);
-                return true;
+            if (ui_in_rect(mx, my, 20, 170, 160, 32)) {
+                if (st->send_running) {
+                    /* Stop button */
+                    st->send_running = false;
+                    strncpy(st->status_text, "Send stopped by user", sizeof(st->status_text) - 1);
+                    /* Cancel will be handled by main loop */
+                    return true;
+                } else if (st->send_filepath[0] && st->send_target_ip[0]) {
+                    st->send_running = true;
+                    st->send_progress_done = 0;
+                    st->send_progress_total = 0;
+                    st->active_input = 0;
+                    SDL_StopTextInput();
+                    strncpy(st->status_text, "Waiting for receiver...", sizeof(st->status_text) - 1);
+                    return true;
+                }
             }
             break;
 
@@ -807,15 +811,20 @@ bool ui_handle_event(SDL_Event *e, struct app_state *st)
                 if (ui_text_field_click(st, mx, my, 285, 130, 70, 28, 6, rpbuf))
                     return true;
             }
-            if (ui_in_rect(mx, my, 20, 170, 180, 32) &&
-                st->recv_savepath[0] && st->recv_target_ip[0] && !st->recv_running) {
-                st->recv_running = true;
-                st->recv_progress_done = 0;
-                st->recv_progress_total = 0;
-                st->active_input = 0;
-                SDL_StopTextInput();
-                strncpy(st->status_text, "Waiting for sender...", sizeof(st->status_text) - 1);
-                return true;
+            if (ui_in_rect(mx, my, 20, 170, 180, 32)) {
+                if (st->recv_running) {
+                    st->recv_running = false;
+                    strncpy(st->status_text, "Receive stopped by user", sizeof(st->status_text) - 1);
+                    return true;
+                } else if (st->recv_savepath[0] && st->recv_target_ip[0]) {
+                    st->recv_running = true;
+                    st->recv_progress_done = 0;
+                    st->recv_progress_total = 0;
+                    st->active_input = 0;
+                    SDL_StopTextInput();
+                    strncpy(st->status_text, "Waiting for sender...", sizeof(st->status_text) - 1);
+                    return true;
+                }
             }
             break;
         }
