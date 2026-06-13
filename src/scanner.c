@@ -111,7 +111,7 @@ static void *scan_ip_thread(void *arg)
         FD_SET(fd, &wfds);
         struct timeval tv;
         tv.tv_sec = 0;
-        tv.tv_usec = 200000;
+        tv.tv_usec = 800000;  /* 800ms — enough for high-latency VPN */
 
         if (select(fd + 1, NULL, &wfds, NULL, &tv) > 0) {
             int err = 0;
@@ -175,6 +175,7 @@ static void scanner_run(uint16_t port)
 
     /* Scan each subnet */
     for (int s = 0; s < subnet_count; s++) {
+        fprintf(stderr, "[SCAN] scanning subnet %s.x (port %d)...\n", subnets[s], port);
         scan_subnet(subnets[s], port);
     }
 
