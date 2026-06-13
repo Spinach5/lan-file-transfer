@@ -1,25 +1,25 @@
-#define _POSIX_C_SOURCE 200112L
-
 #include "scanner.h"
 #include "protocol.h"
+#include "compat.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 #include <pthread.h>
 #include <stdatomic.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <netdb.h>
-#include <ifaddrs.h>
 #include <errno.h>
-#include <fcntl.h>
-#include <sys/select.h>
 #include <stdbool.h>
 
+#ifdef _WIN32
+#include <iphlpapi.h>
+#pragma comment(lib, "iphlpapi.lib")
+#else
+#include <ifaddrs.h>
+#endif
+
+#ifdef BUILD_GUI
 #include <SDL2/SDL.h>
+#endif
 
 #define SCANNER_THREADS 32
 #define MAX_SUBNETS     16
@@ -41,6 +41,33 @@ static const char *reverse_dns(const char *ip)
 /* Collect ALL non-loopback /24 subnets from local interfaces */
 static int get_all_subnets(char subnets[][64], int max)
 {
+#ifdef _WIN32
+    /* Windows: use GetAdaptersAddresses */
+    ULONG bufLen = 15000;
+    IP_ADAPTER_ADDRESSES *adapters = malloc(bufLen);
+    if (!adapters) return -1;
+    if (GetAdaptersAddresses(AF_INET, GAA_FLAG_INCLUDE_PREFIX, NULL, adapters, &bufLen) != 0) {
+        free(adapters); return -1;
+    }
+    int count = 0;
+    for (IP_ADAPTER_ADDRESSES *a = adapters; a && count < max; a = a->Next) {
+        if (a->OperStatus != IfOperStatusUp) continue;
+        for (IP_ADAPTER_UNICAST_ADDRESS *u = a->FirstUnicastAddress; u; u = u->Next) {
+            if (u->Address.lpSockaddr->sa_family != AF_INET) continue;
+            struct sockaddr_in *sin = (struct sockaddr_in *)u->Address.lpSockaddr;
+            uint32_t ip = ntohl(sin->sin_addr.s_addr);
+            /* Skip loopback */
+            if ((ip & 0xFF000000) == 0x7F000000) continue;
+            char subnet[64];
+            snprintf(subnet, sizeof(subnet), "%d.%d.%d", (ip>>24)&0xFF, (ip>>16)&0xFF, (ip>>8)&0xFF);
+            bool dup = false;
+            for (int i = 0; i < count; i++) if (strcmp(subnets[i], subnet) == 0) { dup = true; break; }
+            if (!dup) { strncpy(subnets[count], subnet, 63); count++; }
+        }
+    }
+    free(adapters);
+    return count;
+#else
     struct ifaddrs *ifaddr, *ifa;
     if (getifaddrs(&ifaddr) == -1) return -1;
 
@@ -70,6 +97,7 @@ static int get_all_subnets(char subnets[][64], int max)
     }
     freeifaddrs(ifaddr);
     return count;
+#endif
 }
 
 typedef struct {
@@ -92,11 +120,10 @@ static void *scan_ip_thread(void *arg)
             break;
         }
 
-        int fd = socket(AF_INET, SOCK_STREAM, 0);
-        if (fd < 0) continue;
+        socket_t fd = socket(AF_INET, SOCK_STREAM, 0);
+        if (fd == INVALID_FD) continue;
 
-        int flags = fcntl(fd, F_GETFL, 0);
-        fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+        sock_set_nonblock(fd);
 
         struct sockaddr_in addr;
         memset(&addr, 0, sizeof(addr));

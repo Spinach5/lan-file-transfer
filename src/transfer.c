@@ -1,6 +1,7 @@
 #include "transfer.h"
 #include "network.h"
 #include "protocol.h"
+#include "compat.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -202,7 +203,11 @@ static void walk_and_add(struct archive *a, const char *disk_base, const char *a
 static char *compress_dir_to_tmp(const char *dirpath, uint64_t *out_size)
 {
     char tmpfile[256];
+#ifdef _WIN32
+    snprintf(tmpfile, sizeof(tmpfile), "lanft_%d.tar.gz", (int)GetCurrentProcessId());
+#else
     snprintf(tmpfile, sizeof(tmpfile), "/tmp/lanft_%d.tar.gz", (int)getpid());
+#endif
 
     struct archive *a = archive_write_new();
     archive_write_add_filter_gzip(a);
@@ -267,7 +272,7 @@ static int extract_archive(const char *arc_path, const char *dest_dir)
 static int tcp_send_file(struct net_context *nc, const char *filepath,
                           uint64_t resume_offset)
 {
-    int fd = net_get_fd(nc);
+    socket_t fd = net_get_fd(nc);
     fprintf(stderr, "[SEND] tcp_send_file: fd=%d, file=%s\n", fd, filepath);
     if (fd < 0) { fprintf(stderr, "[SEND] BAD FD!\n"); push_error("No socket"); return -2; }
 
@@ -390,7 +395,7 @@ static int tcp_send_file(struct net_context *nc, const char *filepath,
 
 static void tcp_recv_file(struct net_context *nc, const char *savepath)
 {
-    int fd = net_get_fd(nc);
+    socket_t fd = net_get_fd(nc);
     fprintf(stderr, "[RECV] tcp_recv_file: fd=%d, save=%s\n", fd, savepath);
     if (fd < 0) { fprintf(stderr, "[RECV] BAD FD!\n"); push_error("No socket"); return; }
 

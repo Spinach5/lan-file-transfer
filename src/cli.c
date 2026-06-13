@@ -1,16 +1,13 @@
-#define _GNU_SOURCE
 #include "protocol.h"
 #include "network.h"
 #include "transfer.h"
+#include "compat.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <getopt.h>
 #include <time.h>
-#include <sys/time.h>
 #include <sys/stat.h>
-#include <unistd.h>
 
 #define CLI_VERSION "lanft v1.0"
 

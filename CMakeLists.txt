@@ -8,8 +8,19 @@ option(BUILD_GUI "Build with SDL2 GUI (requires SDL2, SDL2_ttf)" ON)
 
 # Dependencies required by both modes
 find_package(PkgConfig REQUIRED)
-pkg_check_modules(LIBWEBSOCKETS REQUIRED libwebsockets)
-pkg_check_modules(LIBARCHIVE REQUIRED libarchive)
+
+if(WIN32)
+    # Windows: use vcpkg or manual paths
+    if(DEFINED ENV{VCPKG_ROOT})
+        set(CMAKE_TOOLCHAIN_FILE "$ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
+            CACHE STRING "vcpkg toolchain")
+    endif()
+    pkg_check_modules(LIBWEBSOCKETS libwebsockets)
+    pkg_check_modules(LIBARCHIVE libarchive)
+else()
+    pkg_check_modules(LIBWEBSOCKETS REQUIRED libwebsockets)
+    pkg_check_modules(LIBARCHIVE REQUIRED libarchive)
+endif()
 find_package(Threads REQUIRED)
 
 # Base sources (always compiled)
@@ -49,4 +60,8 @@ target_link_libraries(lanft
 
 if(BUILD_GUI)
     target_link_libraries(lanft ${SDL2_LIBRARIES})
+endif()
+
+if(WIN32)
+    target_link_libraries(lanft ws2_32 iphlpapi)
 endif()

@@ -1,17 +1,12 @@
 #include "network.h"
 #include "protocol.h"
+#include "compat.h"
 
 #include <libwebsockets.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
-#include <unistd.h>
-#include <fcntl.h>
 #include <errno.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <netdb.h>
 
 struct net_context {
     int mode;                    /* FT_PROTO_TCP or FT_PROTO_UDP */
@@ -20,8 +15,8 @@ struct net_context {
     struct lws *wsi;
 
     /* TCP state */
-    int listen_fd;
-    int sock_fd;
+    socket_t listen_fd;
+    socket_t sock_fd;
     bool connected;
     bool closed;
     int error_code;
@@ -40,7 +35,7 @@ struct net_context {
     bool tx_pending;
 
     /* UDP */
-    int udp_fd;
+    socket_t udp_fd;
     struct sockaddr_in udp_peer;
     bool udp_bound;
 
@@ -77,7 +72,7 @@ static int raw_callback(struct lws *wsi, enum lws_callback_reasons reason,
 
     case LWS_CALLBACK_RAW_WRITEABLE:
         nc = sess->nc;
-        if (nc && nc->tx_pending && nc->sock_fd >= 0) {
+        if (nc && nc->tx_pending && nc->sock_fd != INVALID_FD) {
             size_t remaining = nc->tx_len - nc->tx_sent;
             ssize_t n = write(nc->sock_fd,
                               nc->tx_data + nc->tx_sent,
@@ -130,9 +125,11 @@ struct net_context *net_create(int mode)
     struct net_context *nc = calloc(1, sizeof(*nc));
     if (!nc) return NULL;
     nc->mode = mode;
-    nc->listen_fd = -1;
-    nc->sock_fd = -1;
-    nc->udp_fd = -1;
+    nc->listen_fd = INVALID_FD;
+    nc->sock_fd = INVALID_FD;
+    nc->udp_fd = INVALID_FD;
+
+    if (SOCKET_INIT() != 0) { free(nc); return NULL; }
 
     struct lws_context_creation_info info;
     memset(&info, 0, sizeof(info));
@@ -171,7 +168,7 @@ int net_listen(struct net_context *nc, int port)
 int net_listen_ip(struct net_context *nc, const char *ip, int port)
 {
     nc->listen_fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (nc->listen_fd < 0) return -1;
+    if (nc->listen_fd == INVALID_FD) return -1;
 
     int opt = 1;
     setsockopt(nc->listen_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
@@ -213,7 +210,7 @@ int net_accept(struct net_context *nc)
         struct sockaddr_in client;
         socklen_t len = sizeof(client);
         nc->sock_fd = accept(nc->listen_fd, (struct sockaddr *)&client, &len);
-        if (nc->sock_fd < 0) return -1;
+        if (nc->sock_fd == INVALID_FD) return -1;
 
         lws_sock_file_fd_type fd;
         fd.sockfd = nc->sock_fd;
@@ -233,7 +230,7 @@ int net_accept(struct net_context *nc)
 int net_connect(struct net_context *nc, const char *ip, int port)
 {
     nc->sock_fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (nc->sock_fd < 0) return -1;
+    if (nc->sock_fd == INVALID_FD) return -1;
 
     struct sockaddr_in addr;
     memset(&addr, 0, sizeof(addr));
@@ -269,7 +266,7 @@ int net_connect(struct net_context *nc, const char *ip, int port)
 int net_udp_bind(struct net_context *nc, int port)
 {
     nc->udp_fd = socket(AF_INET, SOCK_DGRAM, 0);
-    if (nc->udp_fd < 0) return -1;
+    if (nc->udp_fd == INVALID_FD) return -1;
 
     int opt = 1;
     setsockopt(nc->udp_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
@@ -387,7 +384,7 @@ void *net_get_wsi(struct net_context *nc)
     return nc->wsi;
 }
 
-int net_get_fd(struct net_context *nc)
+socket_t net_get_fd(struct net_context *nc)
 {
     return nc->sock_fd;
 }
@@ -408,9 +405,10 @@ void net_destroy(struct net_context *nc)
 {
     if (!nc) return;
     free(nc->tx_buf);
-    if (nc->listen_fd >= 0) close(nc->listen_fd);
-    if (nc->sock_fd >= 0) close(nc->sock_fd);
-    if (nc->udp_fd >= 0) close(nc->udp_fd);
+    if (nc->listen_fd != INVALID_FD) close(nc->listen_fd);
+    if (nc->sock_fd != INVALID_FD) close(nc->sock_fd);
+    if (nc->udp_fd != INVALID_FD) close(nc->udp_fd);
     if (nc->ctx) lws_context_destroy(nc->ctx);
+    SOCKET_QUIT();
     free(nc);
 }

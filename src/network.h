@@ -1,6 +1,7 @@
 #ifndef NETWORK_H
 #define NETWORK_H
 
+#include "compat.h"
 #include <stddef.h>
 #include <stdint.h>
 #include <stdbool.h>
@@ -60,7 +61,7 @@ bool net_has_error(struct net_context *nc);
 void *net_get_wsi(struct net_context *nc);
 
 /* Get the socket fd for direct I/O */
-int net_get_fd(struct net_context *nc);
+socket_t net_get_fd(struct net_context *nc);
 
 /* Signal cancellation — causes net_accept() and transfer loops to stop */
 void net_cancel(struct net_context *nc);
