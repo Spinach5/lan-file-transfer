@@ -14,7 +14,9 @@
 #include <dirent.h>
 #include <archive.h>
 #include <archive_entry.h>
+#ifdef BUILD_GUI
 #include <SDL2/SDL.h>
+#endif
 
 /* ── Callbacks ─────────────────────────────────────────────── */
 
@@ -33,6 +35,7 @@ void transfer_set_callbacks(transfer_progress_fn prog,
 
 /* ── Helpers ───────────────────────────────────────────────── */
 
+#ifdef BUILD_GUI
 static void push_event(int code, void *data)
 {
     SDL_Event event;
@@ -41,6 +44,7 @@ static void push_event(int code, void *data)
     event.user.data1 = data;
     SDL_PushEvent(&event);
 }
+#endif
 
 static void push_error(const char *fmt, ...)
 {
@@ -50,26 +54,34 @@ static void push_error(const char *fmt, ...)
     vsnprintf(buf, sizeof(buf), fmt, ap);
     va_end(ap);
     if (g_err_cb) { g_err_cb(buf); return; }
+#ifdef BUILD_GUI
     struct event_error *err = calloc(1, sizeof(*err));
     if (!err) return;
     strncpy(err->message, buf, sizeof(err->message) - 1);
     push_event(SDL_USEREVENT + 5, err);
+#else
+    fprintf(stderr, "Error: %s\n", buf);
+#endif
 }
 
 static void push_progress(uint64_t done, uint64_t total)
 {
     if (g_prog_cb) { g_prog_cb(done, total); return; }
+#ifdef BUILD_GUI
     struct event_progress *p = calloc(1, sizeof(*p));
     if (!p) return;
     p->bytes_done = done;
     p->bytes_total = total;
     push_event(SDL_USEREVENT + 3, p);
+#endif
 }
 
 static void push_xfer_done(void)
 {
     if (g_done_cb) { g_done_cb(); return; }
+#ifdef BUILD_GUI
     push_event(SDL_USEREVENT + 4, NULL);
+#endif
 }
 
 static uint64_t file_size(const char *path)
