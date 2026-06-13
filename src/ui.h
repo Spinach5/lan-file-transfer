@@ -11,6 +11,7 @@
 #define USEREVENT_PROGRESS    (SDL_USEREVENT + 3)
 #define USEREVENT_XFER_DONE   (SDL_USEREVENT + 4)
 #define USEREVENT_ERROR       (SDL_USEREVENT + 5)
+#define USEREVENT_ZENITY_RESULT (SDL_USEREVENT + 6)
 
 /* ── Color scheme (dark theme) ─────────────────────────────── */
 #define COLOR_BG        ((SDL_Color){0x1e, 0x1e, 0x2e, 255})

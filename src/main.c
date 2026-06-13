@@ -291,6 +291,20 @@ int main(int argc, char **argv)
                 break;
             }
 
+            case USEREVENT_ZENITY_RESULT: {
+                /* Zenity dialog returned — update file path */
+                const char *path = (const char *)event.user.data1;
+                int target = event.user.code;
+                if (path && target == 1) {
+                    strncpy(state.send_filepath, path, sizeof(state.send_filepath) - 1);
+                    snprintf(state.status_text, sizeof(state.status_text), "Selected: %s", path);
+                } else if (path && target == 2) {
+                    strncpy(state.recv_savepath, path, sizeof(state.recv_savepath) - 1);
+                    snprintf(state.status_text, sizeof(state.status_text), "Save to: %s", path);
+                }
+                break;
+            }
+
             case USEREVENT_ERROR: {
                 struct event_error *evt = (struct event_error *)event.user.data1;
                 if (evt) {

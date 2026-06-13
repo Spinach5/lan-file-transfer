@@ -10,29 +10,60 @@
 #include <pthread.h>
 #include <SDL2/SDL.h>
 
-/* ── Zenity file dialog helper ─────────────────────────────── */
+/* ── Zenity file dialog (async, runs in background thread) ─── */
 
-static char *zenity_select(const char *title, bool directory)
+struct zenity_args {
+    char title[256];
+    bool directory;
+    int  target;  /* 1=send path, 2=recv save path */
+};
+
+static void *zenity_thread(void *arg)
 {
+    struct zenity_args *za = (struct zenity_args *)arg;
+
     char cmd[512];
-    if (directory)
-        snprintf(cmd, sizeof(cmd), "zenity --file-selection --directory --title=\"%s\" 2>/dev/null", title);
+    if (za->directory)
+        snprintf(cmd, sizeof(cmd), "zenity --file-selection --directory --title=\"%s\" 2>/dev/null", za->title);
     else
-        snprintf(cmd, sizeof(cmd), "zenity --file-selection --title=\"%s\" 2>/dev/null", title);
+        snprintf(cmd, sizeof(cmd), "zenity --file-selection --title=\"%s\" 2>/dev/null", za->title);
 
     FILE *fp = popen(cmd, "r");
-    if (!fp) return NULL;
+    char *path = NULL;
+    static char buf[1024];  /* must outlive this function — pushed to SDL event */
 
-    static char buf[1024];
-    if (fgets(buf, sizeof(buf), fp)) {
-        /* Strip trailing newline */
-        size_t len = strlen(buf);
-        if (len > 0 && buf[len-1] == '\n') buf[len-1] = '\0';
+    if (fp) {
+        if (fgets(buf, sizeof(buf), fp)) {
+            size_t len = strlen(buf);
+            if (len > 0 && buf[len-1] == '\n') buf[len-1] = '\0';
+            path = buf;
+        }
         pclose(fp);
-        return buf;
     }
-    pclose(fp);
+
+    /* Push result via SDL event — data1=path or NULL, data2=target */
+    SDL_Event event;
+    SDL_memset(&event, 0, sizeof(event));
+    event.type = USEREVENT_ZENITY_RESULT;
+    event.user.code = za->target;
+    event.user.data1 = path;  /* pointer to static buf, or NULL if cancelled */
+    SDL_PushEvent(&event);
+
+    free(za);
     return NULL;
+}
+
+static void zenity_launch(struct app_state *st, const char *title, bool directory, int target)
+{
+    struct zenity_args *za = malloc(sizeof(*za));
+    if (!za) return;
+    strncpy(za->title, title, sizeof(za->title) - 1);
+    za->directory = directory;
+    za->target = target;
+
+    pthread_t tid;
+    pthread_create(&tid, NULL, zenity_thread, za);
+    pthread_detach(tid);
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -611,11 +642,7 @@ bool ui_handle_event(SDL_Event *e, struct app_state *st)
 
         case TAB_SEND:
             if (ui_in_rect(mx, my, st->window_w - 150, 50, 80, 28)) {
-                char *path = zenity_select("Select File to Send", false);
-                if (path) {
-                    strncpy(st->send_filepath, path, sizeof(st->send_filepath) - 1);
-                    snprintf(st->status_text, sizeof(st->status_text), "Selected: %s", path);
-                }
+                zenity_launch(st, "Select File to Send", false, 1);
                 return true;
             }
             if (ui_in_rect(mx, my, 120, 90, 60, 28)) { st->send_protocol = 0; return true; }
@@ -642,11 +669,7 @@ bool ui_handle_event(SDL_Event *e, struct app_state *st)
 
         case TAB_RECEIVE:
             if (ui_in_rect(mx, my, st->window_w - 150, 50, 80, 28)) {
-                char *path = zenity_select("Select Save Directory", true);
-                if (path) {
-                    strncpy(st->recv_savepath, path, sizeof(st->recv_savepath) - 1);
-                    snprintf(st->status_text, sizeof(st->status_text), "Save to: %s", path);
-                }
+                zenity_launch(st, "Select Save Directory", true, 2);
                 return true;
             }
             if (ui_in_rect(mx, my, 120, 90, 60, 28)) { st->recv_protocol = 0; return true; }
