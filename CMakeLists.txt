@@ -12,6 +12,9 @@ include_directories(${SDL2_INCLUDE_DIRS})
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(LIBWEBSOCKETS REQUIRED libwebsockets)
 
+# Find libarchive
+pkg_check_modules(LIBARCHIVE REQUIRED libarchive)
+
 # Find pthreads
 find_package(Threads REQUIRED)
 
@@ -28,11 +31,13 @@ add_executable(lanft ${SOURCES})
 target_include_directories(lanft PRIVATE
     ${SDL2_INCLUDE_DIRS}
     ${LIBWEBSOCKETS_INCLUDE_DIRS}
+    ${LIBARCHIVE_INCLUDE_DIRS}
     ${CMAKE_SOURCE_DIR}/src
 )
 
 target_link_libraries(lanft
     ${SDL2_LIBRARIES}
     ${LIBWEBSOCKETS_LIBRARIES}
+    ${LIBARCHIVE_LIBRARIES}
     Threads::Threads
 )

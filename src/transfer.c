@@ -10,7 +10,10 @@
 #include <errno.h>
 #include <unistd.h>
 #include <sys/stat.h>
+#include <fcntl.h>
 #include <dirent.h>
+#include <archive.h>
+#include <archive_entry.h>
 #include <SDL2/SDL.h>
 
 /* ── Helpers ───────────────────────────────────────────────── */
@@ -114,55 +117,118 @@ static int sock_write_full(int fd, const void *buf, size_t len)
     return 0;
 }
 
-/* ── Directory send helpers ────────────────────────────────── */
+/* ── libarchive directory compression/extraction ───────────── */
 
-#define DIR_MAX_FILES 4096
-
-struct dir_file {
-    char path[1024];     /* relative path from dir root */
-    uint64_t size;
-};
-
-static int dir_walk(const char *base, const char *subdir,
-                    struct dir_file *files, int *count)
+static int add_to_archive(struct archive *a, const char *disk_path, const char *arc_path)
 {
-    char full[1280];
-    snprintf(full, sizeof(full), "%s/%s", base, subdir ? subdir : "");
-    /* Remove trailing slash if present and not root */
-    size_t flen = strlen(full);
-    if (flen > 1 && full[flen-1] == '/') full[flen-1] = '\0';
+    struct stat st;
+    if (lstat(disk_path, &st) != 0) return -1;
 
-    DIR *d = opendir(full);
-    if (!d) return -1;
+    struct archive_entry *entry = archive_entry_new();
+    archive_entry_set_pathname(entry, arc_path);
+    archive_entry_set_size(entry, st.st_size);
+    archive_entry_set_filetype(entry, AE_IFREG);
+    archive_entry_set_perm(entry, st.st_mode & 0777);
+    archive_write_header(a, entry);
+
+    FILE *fp = fopen(disk_path, "rb");
+    if (fp) {
+        char buf[65536];
+        size_t n;
+        while ((n = fread(buf, 1, sizeof(buf), fp)) > 0)
+            archive_write_data(a, buf, n);
+        fclose(fp);
+    }
+    archive_entry_free(entry);
+    return 0;
+}
+
+static void walk_and_add(struct archive *a, const char *disk_base, const char *arc_base)
+{
+    DIR *d = opendir(disk_base);
+    if (!d) return;
 
     struct dirent *de;
-    while ((de = readdir(d)) != NULL && *count < DIR_MAX_FILES) {
-        if (strcmp(de->d_name, ".") == 0 || strcmp(de->d_name, "..") == 0)
-            continue;
-
-        char item_full[1280], rel[1024];
-        snprintf(item_full, sizeof(item_full), "%s/%s", full, de->d_name);
-        if (subdir)
-            snprintf(rel, sizeof(rel), "%s/%s", subdir, de->d_name);
-        else
-            strncpy(rel, de->d_name, sizeof(rel) - 1);
+    while ((de = readdir(d)) != NULL) {
+        if (strcmp(de->d_name, ".") == 0 || strcmp(de->d_name, "..") == 0) continue;
+        char full_disk[1280], full_arc[1280];
+        snprintf(full_disk, sizeof(full_disk), "%s/%s", disk_base, de->d_name);
+        snprintf(full_arc, sizeof(full_arc), "%s/%s", arc_base, de->d_name);
 
         struct stat st;
-        if (stat(item_full, &st) != 0) continue;
+        if (lstat(full_disk, &st) != 0) continue;
 
         if (S_ISDIR(st.st_mode)) {
-            /* Add directory entry (size=0 marks dir) */
-            strncpy(files[*count].path, rel, sizeof(files[0].path) - 1);
-            files[*count].size = 0;
-            (*count)++;
-            dir_walk(base, rel, files, count);
+            walk_and_add(a, full_disk, full_arc);
         } else if (S_ISREG(st.st_mode)) {
-            strncpy(files[*count].path, rel, sizeof(files[0].path) - 1);
-            files[*count].size = (uint64_t)st.st_size;
-            (*count)++;
+            add_to_archive(a, full_disk, full_arc);
         }
     }
     closedir(d);
+}
+
+static char *compress_dir_to_tmp(const char *dirpath, uint64_t *out_size)
+{
+    char tmpfile[256];
+    snprintf(tmpfile, sizeof(tmpfile), "/tmp/lanft_%d.tar.gz", (int)getpid());
+
+    struct archive *a = archive_write_new();
+    archive_write_add_filter_gzip(a);
+    archive_write_set_format_pax_restricted(a);
+    if (archive_write_open_filename(a, tmpfile) != ARCHIVE_OK) {
+        archive_write_free(a);
+        return NULL;
+    }
+
+    const char *dirname = strrchr(dirpath, '/');
+    if (dirname) dirname++; else dirname = dirpath;
+    walk_and_add(a, dirpath, dirname);
+
+    archive_write_close(a);
+    archive_write_free(a);
+
+    struct stat st;
+    if (stat(tmpfile, &st) != 0) { unlink(tmpfile); return NULL; }
+    *out_size = (uint64_t)st.st_size;
+    return strdup(tmpfile);
+}
+
+static int extract_archive(const char *arc_path, const char *dest_dir)
+{
+    struct archive *a = archive_read_new();
+    archive_read_support_filter_all(a);
+    archive_read_support_format_all(a);
+    if (archive_read_open_filename(a, arc_path, 65536) != ARCHIVE_OK) {
+        archive_read_free(a);
+        return -1;
+    }
+
+    char curdir[1024];
+    if (!getcwd(curdir, sizeof(curdir))) { curdir[0] = '/'; curdir[1] = '\0'; }
+    mkdir(dest_dir, 0755);
+    chdir(dest_dir);
+
+    struct archive_entry *entry;
+    int ret;
+    while ((ret = archive_read_next_header(a, &entry)) == ARCHIVE_OK) {
+        const char *path = archive_entry_pathname(entry);
+        /* Create parent directories if needed */
+        char *slash = strrchr(path, '/');
+        if (slash) { *slash = '\0'; mkdir(path, 0755); /* best effort */ *slash = '/'; }
+
+        int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        if (fd >= 0) {
+            const void *buf;
+            size_t size;
+            int64_t offset;
+            while ((ret = archive_read_data_block(a, &buf, &size, &offset)) == ARCHIVE_OK) {
+                write(fd, buf, size);
+            }
+            close(fd);
+        }
+    }
+    archive_read_free(a);
+    chdir(curdir);
     return 0;
 }
 
@@ -173,29 +239,24 @@ static int tcp_send_file(struct net_context *nc, const char *filepath,
     fprintf(stderr, "[SEND] tcp_send_file: fd=%d, file=%s\n", fd, filepath);
     if (fd < 0) { fprintf(stderr, "[SEND] BAD FD!\n"); push_error("No socket"); return -2; }
 
-    /* Check if path is a directory */
+    /* Check if path is a directory — compress with libarchive */
     struct stat path_st;
     bool is_dir = false;
-    if (stat(filepath, &path_st) == 0 && S_ISDIR(path_st.st_mode))
-        is_dir = true;
-
-    const char *fname = strrchr(filepath, '/');
-    if (fname) fname++; else fname = filepath;
-
-    /* If directory, walk it and collect files */
-    struct dir_file *dir_files = NULL;
-    int dir_count = 0;
+    char *tmp_archive = NULL;
+    const char *actual_path = filepath;
     uint64_t total = 0;
 
-    if (is_dir) {
-        dir_files = calloc(DIR_MAX_FILES, sizeof(struct dir_file));
-        if (!dir_files) { push_error("Out of memory"); return -2; }
-        dir_walk(filepath, NULL, dir_files, &dir_count);
-        /* Calculate total size */
-        for (int i = 0; i < dir_count; i++)
-            total += dir_files[i].size;
-        fprintf(stderr, "[SEND] directory mode: %d entries, %lu total bytes\n",
-                dir_count, (unsigned long)total);
+    if (stat(filepath, &path_st) == 0 && S_ISDIR(path_st.st_mode)) {
+        is_dir = true;
+        fprintf(stderr, "[SEND] directory mode, compressing with libarchive...\n");
+        tmp_archive = compress_dir_to_tmp(filepath, &total);
+        if (!tmp_archive || total == 0) {
+            push_error("Failed to compress directory");
+            free(tmp_archive);
+            return -2;
+        }
+        actual_path = tmp_archive;
+        fprintf(stderr, "[SEND] compressed to %s (%lu bytes)\n", tmp_archive, (unsigned long)total);
     } else {
         FILE *fp = fopen(filepath, "rb");
         if (!fp) { fprintf(stderr, "[SEND] CANNOT OPEN!\n"); push_error("Cannot open: %s", filepath); return -2; }
@@ -204,44 +265,32 @@ static int tcp_send_file(struct net_context *nc, const char *filepath,
         fclose(fp);
     }
 
+    const char *fname = strrchr(filepath, '/');
+    if (fname) fname++; else fname = filepath;
+
     /* Send meta */
     struct ft_meta meta;
     memset(&meta, 0, sizeof(meta));
     meta.magic = FT_MAGIC;
     meta.protocol = FT_PROTO_TCP;
     meta.flags = is_dir ? 1 : 0;
-    meta.name_len = (uint8_t)strlen(fname);
-    strncpy(meta.filename, fname, sizeof(meta.filename) - 1);
+    if (is_dir) {
+        snprintf(meta.filename, sizeof(meta.filename), "%s.tar.gz", fname);
+    } else {
+        strncpy(meta.filename, fname, sizeof(meta.filename) - 1);
+    }
+    meta.name_len = (uint8_t)strlen(meta.filename);
     meta.total_size = total;
 
     fprintf(stderr, "[SEND] sending meta (name=%s, size=%lu, dir=%d)...\n",
-            fname, (unsigned long)total, is_dir);
+            meta.filename, (unsigned long)total, is_dir);
     if (sock_write_full(fd, &meta, sizeof(meta)) != 0) {
         fprintf(stderr, "[SEND] FAILED to send meta!\n");
         push_error("Failed to send file metadata");
-        free(dir_files);
+        free(tmp_archive);
         return -1;  /* likely scanner probe */
     }
     fprintf(stderr, "[SEND] meta sent OK\n");
-
-    /* For directories: send directory entries after meta */
-    if (is_dir && dir_files) {
-        /* Send each directory entry */
-        for (int i = 0; i < dir_count; i++) {
-            struct ft_dirent de;
-            de.path_len = (uint16_t)strlen(dir_files[i].path);
-            de.is_dir = (dir_files[i].size == 0) ? 1 : 0;
-            de.file_size = dir_files[i].size;
-            sock_write_full(fd, &de, sizeof(de));
-            sock_write_full(fd, dir_files[i].path, de.path_len);
-        }
-        /* Send terminator */
-        struct ft_dirent term;
-        memset(&term, 0, sizeof(term));
-        term.path_len = 0;
-        sock_write_full(fd, &term, sizeof(term));
-        fprintf(stderr, "[SEND] sent %d directory entries\n", dir_count);
-    }
 
     /* Read meta response */
     fprintf(stderr, "[SEND] waiting for meta response...\n");
@@ -254,61 +303,26 @@ static int tcp_send_file(struct net_context *nc, const char *filepath,
     } else {
         /* No valid response — likely a scanner probe, re-accept */
         fprintf(stderr, "[SEND] no meta response, likely scanner\n");
-        free(dir_files);
+        free(tmp_archive);
         return -1;
     }
 
     if (resume_offset >= total && total > 0) {
         fprintf(stderr, "[SEND] already complete on receiver, done\n");
         push_xfer_done();
-        free(dir_files);
+        free(tmp_archive);
         return 0;
     }
 
-    uint64_t sent = 0;
-
-    if (is_dir && dir_files) {
-        /* Send each file in the directory */
-        char base_dir[1024];
-        strncpy(base_dir, filepath, sizeof(base_dir) - 1);
-
-        for (int i = 0; i < dir_count; i++) {
-            if (dir_files[i].size == 0) continue; /* skip dirs */
-
-            char full_path[1280];
-            snprintf(full_path, sizeof(full_path), "%s/%s", base_dir, dir_files[i].path);
-
-            FILE *fp = fopen(full_path, "rb");
-            if (!fp) {
-                push_error("Cannot open: %s", dir_files[i].path);
-                free(dir_files);
-                return -2;
-            }
-
-            uint8_t buf[FT_TCP_CHUNK_SIZE];
-            uint64_t file_sent = 0;
-            while (file_sent < dir_files[i].size) {
-                size_t to_read = (dir_files[i].size - file_sent) > FT_TCP_CHUNK_SIZE
-                                 ? FT_TCP_CHUNK_SIZE : (size_t)(dir_files[i].size - file_sent);
-                size_t n = fread(buf, 1, to_read, fp);
-                if (n == 0) break;
-                if (sock_write_full(fd, buf, n) != 0) {
-                    push_error("Send failed");
-                    fclose(fp);
-                    free(dir_files);
-                    return -2;
-                }
-                file_sent += n;
-                sent += n;
-                fprintf(stderr, "[SEND] dir progress %lu/%lu\n", (unsigned long)sent, (unsigned long)total);
-                push_progress(sent, total);
-            }
-            fclose(fp);
+    /* Send data (works for both files and compressed archives) */
+    uint64_t sent = resume_offset;
+    {
+        FILE *fp = fopen(actual_path, "rb");
+        if (!fp) {
+            push_error("Cannot open: %s", actual_path);
+            free(tmp_archive);
+            return -2;
         }
-    } else {
-        /* Single file transfer */
-        FILE *fp = fopen(filepath, "rb");
-        if (!fp) { push_error("Cannot open: %s", filepath); free(dir_files); return -2; }
         fseek(fp, (long)resume_offset, SEEK_SET);
         sent = resume_offset;
 
@@ -322,7 +336,8 @@ static int tcp_send_file(struct net_context *nc, const char *filepath,
                 push_error("Send failed at %lu / %lu bytes",
                            (unsigned long)sent, (unsigned long)total);
                 fclose(fp);
-                free(dir_files);
+                free(tmp_archive);
+                if (tmp_archive) unlink(tmp_archive);
                 return -2;
             }
             sent += n;
@@ -333,7 +348,8 @@ static int tcp_send_file(struct net_context *nc, const char *filepath,
     }
 
     fprintf(stderr, "[SEND] transfer done, sent=%lu/%lu\n", (unsigned long)sent, (unsigned long)total);
-    free(dir_files);
+    if (tmp_archive) unlink(tmp_archive);
+    free(tmp_archive);
     if (sent >= total) push_xfer_done();
     return (sent >= total) ? 0 : -2;
 }
@@ -368,56 +384,8 @@ static void tcp_recv_file(struct net_context *nc, const char *savepath)
     char rootpath[1024];
     snprintf(rootpath, sizeof(rootpath), "%s/%s", savepath, meta.filename);
 
-    /* Read directory entries if this is a directory transfer */
-    struct dir_file *dir_files = NULL;
-    int dir_count = 0;
-    bool has_entries = false;
-
-    if (is_dir) {
-        dir_files = calloc(DIR_MAX_FILES, sizeof(struct dir_file));
-        if (!dir_files) { push_error("Out of memory"); return; }
-
-        /* Receive directory entries until terminator */
-        while (dir_count < DIR_MAX_FILES) {
-            struct ft_dirent de;
-            if (sock_read_full(fd, &de, sizeof(de), 30000) != 0) {
-                push_error("Failed to receive directory entry");
-                free(dir_files);
-                return;
-            }
-            if (de.path_len == 0) break;  /* terminator */
-
-            char path_buf[1024];
-            memset(path_buf, 0, sizeof(path_buf));
-            if (sock_read_full(fd, path_buf, de.path_len, 10000) != 0) {
-                push_error("Failed to receive directory path");
-                free(dir_files);
-                return;
-            }
-            path_buf[de.path_len] = '\0';
-
-            strncpy(dir_files[dir_count].path, path_buf, sizeof(dir_files[0].path) - 1);
-            dir_files[dir_count].size = de.is_dir ? 0 : de.file_size;
-            dir_count++;
-        }
-
-        /* Create the root directory and all subdirectories */
-        mkdir(rootpath, 0755);
-        for (int i = 0; i < dir_count; i++) {
-            if (dir_files[i].size == 0) {
-                /* Create subdirectory */
-                char sub_path[1280];
-                snprintf(sub_path, sizeof(sub_path), "%s/%s", rootpath, dir_files[i].path);
-                mkdir(sub_path, 0755);
-            }
-        }
-
-        has_entries = true;
-        fprintf(stderr, "[RECV] received %d directory entries\n", dir_count);
-    }
-
     /* Calculate resume behavior */
-    uint64_t local_size = has_entries ? 0 : file_size(rootpath);
+    uint64_t local_size = file_size(rootpath);
     uint64_t resume_offset = 0;
 
     if (!is_dir && local_size > 0 && local_size < meta.total_size) {
@@ -431,105 +399,64 @@ static void tcp_recv_file(struct net_context *nc, const char *savepath)
     resp.resume_offset = resume_offset;
     if (sock_write_full(fd, &resp, sizeof(resp)) != 0) {
         push_error("Failed to send meta response");
-        free(dir_files);
         return;
     }
 
     fprintf(stderr, "[RECV] ready for data, total=%lu, is_dir=%d\n",
             (unsigned long)meta.total_size, is_dir);
-    uint64_t received = 0;
+
+    /* Receive file data (as single file) */
+    uint64_t received = resume_offset;
     uint8_t buf[FT_TCP_CHUNK_SIZE];
 
-    if (is_dir && dir_files) {
-        /* Receive file data for each file in the directory */
-        for (int i = 0; i < dir_count; i++) {
-            if (dir_files[i].size == 0) continue; /* skip dir entries */
+    FILE *fp = fopen(rootpath, resume_offset > 0 ? "ab" : "wb");
+    if (!fp) {
+        push_error("Cannot create file: %s", rootpath);
+        return;
+    }
+    if (resume_offset > 0) fseek(fp, (long)resume_offset, SEEK_SET);
 
-            char full_path[1280];
-            snprintf(full_path, sizeof(full_path), "%s/%s", rootpath, dir_files[i].path);
+    while (received < meta.total_size) {
+        size_t to_read = (meta.total_size - received) > FT_TCP_CHUNK_SIZE
+                         ? FT_TCP_CHUNK_SIZE : (size_t)(meta.total_size - received);
 
-            FILE *fp = fopen(full_path, "wb");
-            if (!fp) {
-                push_error("Cannot create file: %s", full_path);
-                free(dir_files);
-                return;
-            }
-
-            uint64_t file_recv = 0;
-            while (file_recv < dir_files[i].size) {
-                size_t to_read = (dir_files[i].size - file_recv) > FT_TCP_CHUNK_SIZE
-                                 ? FT_TCP_CHUNK_SIZE : (size_t)(dir_files[i].size - file_recv);
-
-                fd_set fds;
-                FD_ZERO(&fds);
-                FD_SET(fd, &fds);
-                struct timeval tv = {30, 0};
-                if (select(fd + 1, &fds, NULL, NULL, &tv) <= 0) {
-                    push_error("Receive timeout");
-                    fclose(fp);
-                    free(dir_files);
-                    return;
-                }
-
-                ssize_t n = read(fd, buf, to_read);
-                if (n <= 0) {
-                    push_error("Receive failed");
-                    fclose(fp);
-                    free(dir_files);
-                    return;
-                }
-
-                fwrite(buf, 1, n, fp);
-                file_recv += n;
-                received += n;
-                push_progress(received, meta.total_size);
-            }
+        fd_set fds;
+        FD_ZERO(&fds);
+        FD_SET(fd, &fds);
+        struct timeval tv = {30, 0};
+        if (select(fd + 1, &fds, NULL, NULL, &tv) <= 0) {
+            push_error("Receive timeout");
             fclose(fp);
-        }
-    } else {
-        /* Single file receive */
-        FILE *fp = fopen(rootpath, resume_offset > 0 ? "ab" : "wb");
-        if (!fp) {
-            push_error("Cannot create file: %s", rootpath);
-            free(dir_files);
             return;
         }
-        if (resume_offset > 0) fseek(fp, (long)resume_offset, SEEK_SET);
 
-        received = resume_offset;
-        while (received < meta.total_size) {
-            size_t to_read = (meta.total_size - received) > FT_TCP_CHUNK_SIZE
-                             ? FT_TCP_CHUNK_SIZE : (size_t)(meta.total_size - received);
-
-            fd_set fds;
-            FD_ZERO(&fds);
-            FD_SET(fd, &fds);
-            struct timeval tv = {30, 0};
-            if (select(fd + 1, &fds, NULL, NULL, &tv) <= 0) {
-                push_error("Receive timeout");
-                fclose(fp);
-                free(dir_files);
-                return;
-            }
-
-            ssize_t n = read(fd, buf, to_read);
-            if (n <= 0) {
-                push_error("Receive failed");
-                fclose(fp);
-                free(dir_files);
-                return;
-            }
-
-            fwrite(buf, 1, n, fp);
-            received += n;
-            fprintf(stderr, "[RECV] progress %lu/%lu\n", (unsigned long)received, (unsigned long)meta.total_size);
-            push_progress(received, meta.total_size);
+        ssize_t n = read(fd, buf, to_read);
+        if (n <= 0) {
+            push_error("Receive failed");
+            fclose(fp);
+            return;
         }
-        fclose(fp);
+
+        fwrite(buf, 1, n, fp);
+        received += n;
+        fprintf(stderr, "[RECV] progress %lu/%lu\n", (unsigned long)received, (unsigned long)meta.total_size);
+        push_progress(received, meta.total_size);
+    }
+    fclose(fp);
+
+    /* If directory: extract the .tar.gz archive */
+    if (is_dir && received >= meta.total_size) {
+        fprintf(stderr, "[RECV] extracting archive %s to %s...\n", rootpath, savepath);
+        if (extract_archive(rootpath, savepath) == 0) {
+            fprintf(stderr, "[RECV] extraction complete\n");
+            unlink(rootpath);  /* remove temp archive */
+        } else {
+            push_error("Failed to extract archive");
+            return;
+        }
     }
 
     fprintf(stderr, "[RECV] transfer done, received=%lu/%lu\n", (unsigned long)received, (unsigned long)meta.total_size);
-    free(dir_files);
     push_xfer_done();
 }
 
