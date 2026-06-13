@@ -117,13 +117,17 @@ static void tcp_send_file(struct net_context *nc, const char *filepath,
                           uint64_t resume_offset)
 {
     int fd = net_get_fd(nc);
-    if (fd < 0) { push_error("No socket"); return; }
+    fprintf(stderr, "[SEND] tcp_send_file: fd=%d, file=%s\n", fd, filepath);
+    if (fd < 0) { fprintf(stderr, "[SEND] BAD FD!\n"); push_error("No socket"); return; }
 
     FILE *fp = fopen(filepath, "rb");
-    if (!fp) { push_error("Cannot open file: %s", filepath); return; }
+    if (!fp) { fprintf(stderr, "[SEND] CANNOT OPEN FILE!\n"); push_error("Cannot open file: %s", filepath); return; }
+    fprintf(stderr, "[SEND] file opened OK\n");
 
     fseek(fp, 0, SEEK_END);
     uint64_t total = (uint64_t)ftell(fp);
+    rewind(fp);
+    fprintf(stderr, "[SEND] file size=%lu bytes\n", (unsigned long)total);
 
     const char *fname = strrchr(filepath, '/');
     if (fname) fname++; else fname = filepath;
@@ -137,21 +141,29 @@ static void tcp_send_file(struct net_context *nc, const char *filepath,
     strncpy(meta.filename, fname, sizeof(meta.filename) - 1);
     meta.total_size = total;
 
+    fprintf(stderr, "[SEND] sending meta (name=%s, size=%lu)...\n", fname, (unsigned long)total);
     if (sock_write_full(fd, &meta, sizeof(meta)) != 0) {
+        fprintf(stderr, "[SEND] FAILED to send meta!\n");
         push_error("Failed to send file metadata");
         fclose(fp);
         return;
     }
+    fprintf(stderr, "[SEND] meta sent OK\n");
 
     /* Read meta response */
+    fprintf(stderr, "[SEND] waiting for meta response...\n");
     struct ft_meta_resp resp;
     if (sock_read_full(fd, &resp, sizeof(resp), 10000) == 0 &&
         resp.magic == FT_MAGIC) {
         resume_offset = resp.resume_offset;
+        fprintf(stderr, "[SEND] got meta response, resume_offset=%lu\n", (unsigned long)resume_offset);
+    } else {
+        fprintf(stderr, "[SEND] no valid meta response, starting from 0\n");
     }
 
     /* If receiver already has the complete file, skip */
     if (resume_offset >= total) {
+        fprintf(stderr, "[SEND] file already complete on receiver, done\n");
         push_xfer_done();
         fclose(fp);
         return;
@@ -168,6 +180,7 @@ static void tcp_send_file(struct net_context *nc, const char *filepath,
         if (n == 0) break;
 
         if (sock_write_full(fd, buf, n) != 0) {
+            fprintf(stderr, "[SEND] FAILED at %lu/%lu\n", (unsigned long)sent, (unsigned long)total);
             push_error("Send failed at %lu / %lu bytes",
                        (unsigned long)sent, (unsigned long)total);
             fclose(fp);
@@ -175,11 +188,13 @@ static void tcp_send_file(struct net_context *nc, const char *filepath,
         }
 
         sent += n;
+        fprintf(stderr, "[SEND] progress %lu/%lu\n", (unsigned long)sent, (unsigned long)total);
         push_progress(sent, total);
     }
 
     fclose(fp);
 
+    fprintf(stderr, "[SEND] transfer done, sent=%lu/%lu\n", (unsigned long)sent, (unsigned long)total);
     if (sent >= total) push_xfer_done();
 }
 
@@ -188,14 +203,18 @@ static void tcp_send_file(struct net_context *nc, const char *filepath,
 static void tcp_recv_file(struct net_context *nc, const char *savepath)
 {
     int fd = net_get_fd(nc);
-    if (fd < 0) { push_error("No socket"); return; }
+    fprintf(stderr, "[RECV] tcp_recv_file: fd=%d, save=%s\n", fd, savepath);
+    if (fd < 0) { fprintf(stderr, "[RECV] BAD FD!\n"); push_error("No socket"); return; }
 
     /* Read meta */
+    fprintf(stderr, "[RECV] waiting for meta...\n");
     struct ft_meta meta;
     if (sock_read_full(fd, &meta, sizeof(meta), 30000) != 0) {
+        fprintf(stderr, "[RECV] FAILED to receive meta!\n");
         push_error("Failed to receive file metadata (timeout)");
         return;
     }
+    fprintf(stderr, "[RECV] got meta: name=%s, size=%lu\n", meta.filename, (unsigned long)meta.total_size);
 
     if (meta.magic != FT_MAGIC) {
         push_error("Protocol mismatch — bad magic bytes");
@@ -211,17 +230,12 @@ static void tcp_recv_file(struct net_context *nc, const char *savepath)
     const char *mode = "wb";
 
     if (local_size > 0 && local_size < meta.total_size) {
+        /* Partial file exists — resume from where we left off */
         resume_offset = local_size;
         mode = "ab";
-    } else if (local_size >= meta.total_size) {
-        /* Already complete — tell sender and done */
-        struct ft_meta_resp resp;
-        resp.magic = FT_MAGIC;
-        resp.resume_offset = meta.total_size;
-        sock_write_full(fd, &resp, sizeof(resp));
-        push_xfer_done();
-        return;
     }
+    /* else: local_size >= meta.total_size or file doesn't exist
+       → start fresh (overwrite) with resume_offset=0 */
 
     /* Send meta response */
     struct ft_meta_resp resp;
@@ -240,6 +254,7 @@ static void tcp_recv_file(struct net_context *nc, const char *savepath)
         return;
     }
 
+    fprintf(stderr, "[RECV] ready for data, total=%lu, resume=%lu\n", (unsigned long)meta.total_size, (unsigned long)resume_offset);
     uint64_t received = resume_offset;
 
     /* Receive file data */
@@ -269,10 +284,12 @@ static void tcp_recv_file(struct net_context *nc, const char *savepath)
 
         fwrite(buf, 1, n, fp);
         received += n;
+        fprintf(stderr, "[RECV] progress %lu/%lu (got %zd bytes)\n", (unsigned long)received, (unsigned long)meta.total_size, n);
         push_progress(received, meta.total_size);
     }
 
     fclose(fp);
+    fprintf(stderr, "[RECV] transfer done, received=%lu/%lu\n", (unsigned long)received, (unsigned long)meta.total_size);
     push_xfer_done();
 }
 
@@ -508,13 +525,17 @@ static void udp_recv_file(struct net_context *nc, const char *savepath)
 
 void transfer_send(struct net_context *nc, const char *filepath, int protocol)
 {
+    fprintf(stderr, "[SEND] transfer_send start, proto=%d, file=%s\n", protocol, filepath);
     if (protocol == FT_PROTO_TCP) {
-        /* Sender is server — wait for receiver to connect */
+        fprintf(stderr, "[SEND] calling net_accept...\n");
         if (net_accept(nc) != 0) {
+            fprintf(stderr, "[SEND] net_accept FAILED\n");
             push_error("Failed to accept client connection");
             return;
         }
+        fprintf(stderr, "[SEND] net_accept OK, fd=%d, calling tcp_send_file...\n", net_get_fd(nc));
         tcp_send_file(nc, filepath, 0);
+        fprintf(stderr, "[SEND] tcp_send_file returned\n");
     } else {
         udp_send_file(nc, filepath);
     }
@@ -522,8 +543,11 @@ void transfer_send(struct net_context *nc, const char *filepath, int protocol)
 
 void transfer_recv(struct net_context *nc, const char *savepath, int protocol)
 {
+    fprintf(stderr, "[RECV] transfer_recv start, proto=%d, save=%s\n", protocol, savepath);
     if (protocol == FT_PROTO_TCP) {
+        fprintf(stderr, "[RECV] fd=%d, calling tcp_recv_file...\n", net_get_fd(nc));
         tcp_recv_file(nc, savepath);
+        fprintf(stderr, "[RECV] tcp_recv_file returned\n");
     } else {
         udp_recv_file(nc, savepath);
     }

@@ -91,6 +91,7 @@ static void start_send(struct app_state *state)
     pthread_t tid;
     pthread_create(&tid, NULL, send_thread_func, args);
     pthread_detach(tid);
+    fprintf(stderr, "[MAIN] send thread spawned, port=%d\n", state->send_port);
 }
 
 static void start_recv(struct app_state *state)
@@ -137,6 +138,8 @@ static void start_recv(struct app_state *state)
     pthread_t tid;
     pthread_create(&tid, NULL, recv_thread_func, args);
     pthread_detach(tid);
+    fprintf(stderr, "[MAIN] recv thread spawned, connecting to %s:%d\n",
+            state->recv_target_ip, state->recv_port);
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -314,12 +317,16 @@ int main(int argc, char **argv)
         /* ── Detect send/receive start requests ────────── */
 
         if (state.send_running && !pending_send && state.send_progress_total == 0) {
+            fprintf(stderr, "[MAIN] Starting send: file=%s, target=%s, port=%d, proto=%d\n",
+                    state.send_filepath, state.send_target_ip, state.send_port, state.send_protocol);
             pending_send = true;
             start_send(&state);
         }
         if (!state.send_running) pending_send = false;
 
         if (state.recv_running && !pending_recv && state.recv_progress_total == 0) {
+            fprintf(stderr, "[MAIN] Starting recv: save=%s, target=%s, port=%d, proto=%d\n",
+                    state.recv_savepath, state.recv_target_ip, state.recv_port, state.recv_protocol);
             pending_recv = true;
             start_recv(&state);
         }
