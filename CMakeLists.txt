@@ -4,7 +4,7 @@ project(lanft C)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
-option(BUILD_GUI "Build with SDL2 GUI (requires SDL2, SDL2_ttf)" ON)
+option(BUILD_GUI "Build with SDL2 GUI (requires SDL2)" ON)
 
 # Dependencies required by both modes
 find_package(PkgConfig REQUIRED)
