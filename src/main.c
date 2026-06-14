@@ -4,6 +4,7 @@
 #include "transfer.h"
 #include "ui.h"
 
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -19,6 +20,7 @@
 
 static struct net_context *active_nc = NULL;
 static bool transfer_stopped = false;
+static bool recv_stop_requested = false;
 
 typedef struct {
     struct net_context *nc;
@@ -57,18 +59,76 @@ static void *send_thread_func(void *arg)
 }
 
 typedef struct {
-    struct net_context *nc;
     char savepath[1024];
-    int protocol;
+    char listen_ip[64];
+    int  port;
+    int  protocol;
 } recv_thread_args;
 
 static void *recv_thread_func(void *arg)
 {
     recv_thread_args *a = (recv_thread_args *)arg;
-    fprintf(stderr, "[RECV] thread started, waiting for sender...\n");
-    transfer_recv(a->nc, a->savepath, a->protocol);
-    net_destroy(a->nc);
+    char savepath[1024];
+    strncpy(savepath, a->savepath, sizeof(savepath) - 1);
+    char ip[64];
+    strncpy(ip, a->listen_ip, sizeof(ip) - 1);
+    int port    = a->port;
+    int proto   = a->protocol;
     free(a);
+
+    fprintf(stderr, "[RECV] persistent listener started on %s:%d\n", ip, port);
+
+    while (!recv_stop_requested) {
+        struct net_context *nc = net_create(proto);
+        if (!nc) {
+            recv_stop_requested = true;
+            struct event_error *err = calloc(1, sizeof(*err));
+            snprintf(err->message, sizeof(err->message),
+                     "Failed to create network context");
+            SDL_Event ev; SDL_memset(&ev, 0, sizeof(ev));
+            ev.type = USEREVENT_ERROR; ev.user.data1 = err;
+            SDL_PushEvent(&ev);
+            break;
+        }
+
+        if (proto == FT_PROTO_TCP) {
+            if (net_listen_ip(nc, ip, port) != 0) {
+                recv_stop_requested = true;
+                struct event_error *err = calloc(1, sizeof(*err));
+                snprintf(err->message, sizeof(err->message),
+                         "Failed to listen on %s:%d", ip, port);
+                SDL_Event ev; SDL_memset(&ev, 0, sizeof(ev));
+                ev.type = USEREVENT_ERROR; ev.user.data1 = err;
+                SDL_PushEvent(&ev);
+                net_destroy(nc);
+                break;
+            }
+        } else {
+            if (net_udp_bind(nc, port) != 0) {
+                recv_stop_requested = true;
+                struct event_error *err = calloc(1, sizeof(*err));
+                snprintf(err->message, sizeof(err->message),
+                         "Failed to bind UDP port %d", port);
+                SDL_Event ev; SDL_memset(&ev, 0, sizeof(ev));
+                ev.type = USEREVENT_ERROR; ev.user.data1 = err;
+                SDL_PushEvent(&ev);
+                net_destroy(nc);
+                break;
+            }
+        }
+
+        active_nc = nc;
+        fprintf(stderr, "[RECV] waiting for sender (transfer #%d)...\n",
+                recv_stop_requested ? -1 : 0);
+        transfer_recv(nc, savepath, proto);
+        net_destroy(nc);
+        active_nc = NULL;
+
+        if (recv_stop_requested) break;
+        fprintf(stderr, "[RECV] ready for next transfer...\n");
+    }
+
+    fprintf(stderr, "[RECV] listener stopped\n");
     return NULL;
 }
 
@@ -106,52 +166,19 @@ static void start_send(struct app_state *state)
 
 static void start_recv(struct app_state *state)
 {
-    struct net_context *nc = net_create(state->recv_protocol);
-    if (!nc) {
-        struct event_error *err = calloc(1, sizeof(*err));
-        snprintf(err->message, sizeof(err->message), "Failed to create network context");
-        SDL_Event ev; SDL_memset(&ev, 0, sizeof(ev));
-        ev.type = USEREVENT_ERROR; ev.user.data1 = err;
-        SDL_PushEvent(&ev);
-        return;
-    }
-
-    /* Receiver is server — listen for sender connection */
-    if (state->recv_protocol == FT_PROTO_TCP) {
-        /* Parse IP to listen on (0.0.0.0 = all interfaces) */
-        if (net_listen_ip(nc, state->recv_target_ip, state->recv_port) != 0) {
-            struct event_error *err = calloc(1, sizeof(*err));
-            snprintf(err->message, sizeof(err->message), "Failed to listen on %s:%d",
-                     state->recv_target_ip, state->recv_port);
-            SDL_Event ev; SDL_memset(&ev, 0, sizeof(ev));
-            ev.type = USEREVENT_ERROR; ev.user.data1 = err;
-            SDL_PushEvent(&ev);
-            net_destroy(nc);
-            return;
-        }
-    } else {
-        if (net_udp_bind(nc, state->recv_port) != 0) {
-            struct event_error *err = calloc(1, sizeof(*err));
-            snprintf(err->message, sizeof(err->message), "Failed to bind UDP port %d", state->recv_port);
-            SDL_Event ev; SDL_memset(&ev, 0, sizeof(ev));
-            ev.type = USEREVENT_ERROR; ev.user.data1 = err;
-            SDL_PushEvent(&ev);
-            net_destroy(nc);
-            return;
-        }
-    }
-
     recv_thread_args *args = malloc(sizeof(*args));
-    args->nc = nc;
+    if (!args) return;
     strncpy(args->savepath, state->recv_savepath, sizeof(args->savepath) - 1);
+    strncpy(args->listen_ip, state->recv_target_ip, sizeof(args->listen_ip) - 1);
+    args->port     = state->recv_port;
     args->protocol = state->recv_protocol;
 
-    active_nc = nc;
+    recv_stop_requested = false;
     transfer_stopped = false;
     pthread_t tid;
     pthread_create(&tid, NULL, recv_thread_func, args);
     pthread_detach(tid);
-    fprintf(stderr, "[MAIN] recv thread spawned, listening on %s:%d\n",
+    fprintf(stderr, "[MAIN] persistent recv thread spawned on %s:%d\n",
             state->recv_target_ip, state->recv_port);
 }
 
@@ -193,8 +220,17 @@ static void gui_done(void)
 
 int main(int argc, char **argv)
 {
-    /* CLI mode: any args → run CLI, no SDL */
-    if (argc > 1) {
+    /* Check if --gui flag is present */
+    bool gui_mode = false;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--gui") == 0) {
+            gui_mode = true;
+            break;
+        }
+    }
+
+    /* Default: CLI mode */
+    if (!gui_mode) {
         return cli_main(argc, argv);
     }
 
@@ -276,6 +312,7 @@ int main(int argc, char **argv)
                         /* Cancel active transfer */
                         if (active_nc) net_cancel(active_nc);
                         transfer_stopped = true;
+                        recv_stop_requested = true;
                         state.send_running = false;
                         state.recv_running = false;
                         pending_send = false;
@@ -343,8 +380,9 @@ int main(int argc, char **argv)
                     state.history_pending_total = state.send_running
                         ? state.send_progress_total : state.recv_progress_total;
 
-                    strncpy(he->name, state.history_pending_name, 255);
-                    /* start_time already set at transfer start */
+                    /* Use actual received filename for persistent recv */
+                    const char *recv_name = transfer_last_recv_name();
+                    strncpy(he->name, recv_name ? recv_name : state.history_pending_name, 255);
                     time_t now = time(NULL);
                     strftime(he->end_time, 32, "%H:%M:%S", localtime(&now));
                     he->duration_ms = end_ms - state.history_pending_start_ms;
@@ -357,12 +395,21 @@ int main(int argc, char **argv)
                     else he->speed = 0;
                     state.history_count++;
                     history_save(&state);
+                    /* Reset start time for next persistent transfer */
+                    state.history_pending_start_ms = end_ms;
                 }
-                state.send_running = false;
-                state.recv_running = false;
-                pending_send = false;
-                pending_recv = false;
-                active_nc = NULL;
+                if (state.send_running) {
+                    state.send_running = false;
+                    pending_send = false;
+                    active_nc = NULL;
+                }
+                /* For receive: keep running (persistent listener) */
+                if (state.recv_running) {
+                    /* active_nc is managed by recv_thread_func */
+                    /* Reset progress for next transfer display */
+                    state.recv_progress_done = 0;
+                    state.recv_progress_total = 0;
+                }
                 strncpy(state.status_text, "Transfer complete!", sizeof(state.status_text) - 1);
                 break;
             }
@@ -391,7 +438,8 @@ int main(int argc, char **argv)
                         struct hist_entry *he = &state.history[state.history_count];
                         struct timeval tv; gettimeofday(&tv, NULL);
                         uint64_t end_ms = (uint64_t)tv.tv_sec * 1000 + tv.tv_usec / 1000;
-                        strncpy(he->name, state.history_pending_name, 255);
+                        const char *recv_name = transfer_last_recv_name();
+                        strncpy(he->name, recv_name ? recv_name : state.history_pending_name, 255);
                         time_t now = time(NULL);
                         strftime(he->end_time, 32, "%H:%M:%S", localtime(&now));
                         he->duration_ms = (end_ms > state.history_pending_start_ms) ? end_ms - state.history_pending_start_ms : 0;
@@ -406,12 +454,14 @@ int main(int argc, char **argv)
                         } else { he->progress = 0; he->speed = 0; }
                         state.history_count++;
                         history_save(&state);
+                        state.history_pending_start_ms = end_ms;
                     }
-                    state.send_running = false;
-                    state.recv_running = false;
-                    pending_send = false;
-                    pending_recv = false;
-                    active_nc = NULL;
+                    if (state.send_running) {
+                        state.send_running = false;
+                        pending_send = false;
+                        active_nc = NULL;
+                    }
+                    /* For receive: keep running (persistent listener) */
                     snprintf(state.status_text, sizeof(state.status_text), "Error: %s", evt->message);
                 }
                 free(evt);
@@ -432,6 +482,7 @@ int main(int argc, char **argv)
             pending_send = false;
         }
         if (!state.recv_running && pending_recv && active_nc) {
+            recv_stop_requested = true;
             net_cancel(active_nc);
             pending_recv = false;
         }

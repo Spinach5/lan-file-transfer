@@ -20,4 +20,8 @@ void transfer_set_callbacks(transfer_progress_fn prog,
 void transfer_send(struct net_context *nc, const char *filepath, int protocol);
 void transfer_recv(struct net_context *nc, const char *savepath, int protocol);
 
+/* Get the filename from the last received meta (for history logging).
+   Returns NULL if no transfer has occurred yet. */
+const char *transfer_last_recv_name(void);
+
 #endif /* TRANSFER_H */

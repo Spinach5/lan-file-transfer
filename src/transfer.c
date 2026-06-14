@@ -34,6 +34,15 @@ void transfer_set_callbacks(transfer_progress_fn prog,
     g_done_cb = done;
 }
 
+/* ── Last received filename (for persistent listener history) ── */
+
+static char g_last_recv_name[FT_MAX_FILENAME];
+
+const char *transfer_last_recv_name(void)
+{
+    return g_last_recv_name[0] ? g_last_recv_name : NULL;
+}
+
 /* ── Helpers ───────────────────────────────────────────────── */
 
 #ifdef BUILD_GUI
@@ -417,6 +426,8 @@ static void tcp_recv_file(struct net_context *nc, const char *savepath)
         return;
     }
 
+    strncpy(g_last_recv_name, meta.filename, sizeof(g_last_recv_name) - 1);
+
     bool is_dir = (meta.flags & 0x01) != 0;
 
     /* Determine output path */
@@ -643,6 +654,8 @@ static void udp_recv_file(struct net_context *nc, const char *savepath)
         push_error("Protocol mismatch — no valid meta received");
         return;
     }
+
+    strncpy(g_last_recv_name, meta.filename, sizeof(g_last_recv_name) - 1);
 
     char fullpath[1024];
     snprintf(fullpath, sizeof(fullpath), "%s/%s", savepath, meta.filename);

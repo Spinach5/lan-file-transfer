@@ -89,8 +89,9 @@ static void cli_done(void)
 static void print_help(const char *prog)
 {
     printf("Usage: %s [OPTIONS] PATH\n\n", prog);
-    printf("CLI mode — LAN file transfer tool\n\n");
+    printf("CLI mode (default) — LAN file transfer tool\n\n");
     printf("Options:\n");
+    printf("  --gui                 Launch SDL2 GUI (graphical mode)\n");
     printf("  -h, --help            Show this help\n");
     printf("  -v, --version         Show version\n");
     printf("  -S                    Shortcut for --mode=S (send)\n");
@@ -121,6 +122,7 @@ int cli_main(int argc, char **argv)
     static struct option long_opts[] = {
         {"help",     no_argument,       0, 'h'},
         {"version",  no_argument,       0, 'v'},
+        {"gui",      no_argument,       0, 1004},
         {"protocol", required_argument, 0, 1000},
         {"mode",     required_argument, 0, 1001},
         {"port",     required_argument, 0, 'p'},
@@ -149,6 +151,10 @@ int cli_main(int argc, char **argv)
         case 1003:
             cfg.show_history = true;
             break;
+        case 1004:
+            fprintf(stderr, "GUI mode is not available in this build.\n");
+            fprintf(stderr, "Rebuild with: cmake .. -DBUILD_GUI=ON\n");
+            return 1;
         default:
             print_help(argv[0]);
             return 1;
@@ -208,18 +214,19 @@ int cli_main(int argc, char **argv)
     transfer_set_callbacks(cli_progress, cli_error, cli_done);
 
     /* ── Execute ──────────────────────────────────────────── */
-    struct net_context *nc = net_create(cfg.protocol);
-    if (!nc) {
-        fprintf(stderr, "Error: failed to create network context\n");
-        return 1;
-    }
 
-    cli_start_ms = now_ms();
     cli_ret = 1;
 
     if (cfg.mode == 0) {
         /* Send — client connects to receiver */
+        struct net_context *nc = net_create(cfg.protocol);
+        if (!nc) {
+            fprintf(stderr, "Error: failed to create network context\n");
+            return 1;
+        }
+
         fprintf(stderr, "Connecting to %s:%d...\n", cfg.address, cfg.port);
+        cli_start_ms = now_ms();
         int tries = 0;
         while (tries < 60) {
             if (cfg.protocol == FT_PROTO_TCP) {
@@ -242,12 +249,25 @@ int cli_main(int argc, char **argv)
         }
         fprintf(stderr, "\nConnected! Sending %s...\n", cfg.path);
         transfer_send(nc, cfg.path, cfg.protocol);
-    } else {
-        /* Receive — server listens */
-        fprintf(stderr, "Listening on %s:%d...\n", cfg.address, cfg.port);
+        net_destroy(nc);
+        return cli_ret;
+    }
+
+    /* Receive — persistent listener, loops forever */
+    fprintf(stderr, "Persistent listener on %s:%d (Ctrl+C to stop)\n\n",
+            cfg.address, cfg.port);
+    int transfer_count = 0;
+    while (1) {
+        struct net_context *nc = net_create(cfg.protocol);
+        if (!nc) {
+            fprintf(stderr, "Error: failed to create network context\n");
+            return 1;
+        }
+
         if (cfg.protocol == FT_PROTO_TCP) {
             if (net_listen_ip(nc, cfg.address, cfg.port) != 0) {
-                fprintf(stderr, "Error: failed to listen on %s:%d\n", cfg.address, cfg.port);
+                fprintf(stderr, "Error: failed to listen on %s:%d\n",
+                        cfg.address, cfg.port);
                 net_destroy(nc);
                 return 1;
             }
@@ -258,10 +278,20 @@ int cli_main(int argc, char **argv)
                 return 1;
             }
         }
-        fprintf(stderr, "Waiting for sender...\n");
-        transfer_recv(nc, cfg.path, cfg.protocol);
-    }
 
-    net_destroy(nc);
-    return cli_ret;
+        transfer_count++;
+        cli_start_ms = now_ms();
+        cli_ret = 1;
+        fprintf(stderr, "[%d] Waiting for sender...\n", transfer_count);
+        transfer_recv(nc, cfg.path, cfg.protocol);
+        net_destroy(nc);
+
+        if (cli_ret != 0) {
+            fprintf(stderr, "\n[%d] Transfer failed, continuing to listen...\n\n",
+                    transfer_count);
+        } else {
+            fprintf(stderr, "\n[%d] Done, listening for next...\n\n",
+                    transfer_count);
+        }
+    }
 }

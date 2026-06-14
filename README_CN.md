@@ -141,7 +141,7 @@ make -j$(nproc)
 # 运行 GUI（需要 Termux:X11 应用）
 termux-x11 :0 &
 export DISPLAY=:0
-./lanft
+./lanft --gui
 ```
 
 ---
@@ -199,7 +199,7 @@ websocket/
 ### GUI 模式
 
 ```bash
-./lanft
+./lanft --gui
 ```
 
 打开 SDL2 窗口，包含四个标签页：
@@ -216,7 +216,9 @@ websocket/
 2. 发送端：Send File → 选择文件 → 输入接收端 IP → Start Send
 3. 两端显示进度条；完成后记录到 History
 
-### CLI 模式
+### CLI 模式（默认）
+
+CLI 为默认模式，无需额外参数。
 
 ```bash
 # 发送
@@ -229,6 +231,9 @@ lanft --mode=R ./downloads/
 lanft -R -p 5555 ./received/
 lanft --mode=R --address=10.84.183.2 -p 5555 ./received/
 
+# 启动 GUI
+lanft --gui
+
 # 信息
 lanft --help
 lanft --version
@@ -239,6 +244,7 @@ lanft --history
 
 | 短选项 | 长选项 | 默认值 | 说明 |
 |-------|------|--------|------|
+| | `--gui` | — | 启动 SDL2 图形界面（CLI 为默认） |
 | `-h` | `--help` | — | 打印帮助并退出 |
 | `-v` | `--version` | — | 打印版本号并退出 |
 | `-S` | — | — | `--mode=S` 的缩写（发送） |
@@ -281,4 +287,4 @@ lanft --history
 MIT
 
 ## 星折线图
-[![Star History Chart](https://api.star-history.com/chart?repos=Spinach5/lan-file-transfer&type=date&logscale&legend=top-left)](https://www.star-history.com/?repos=Spinach5%2Flan-file-transfer&type=date&logscale=&legend=top-left)
+[![Star History Chart](https://api.star-history.com/chart?repos=Spinach5/lanft&type=date&logscale&legend=top-left)](https://www.star-history.com/?repos=Spinach5%2Flanft&type=date&logscale=&legend=top-left)
