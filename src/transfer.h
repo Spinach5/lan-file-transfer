@@ -1,6 +1,7 @@
 #ifndef TRANSFER_H
 #define TRANSFER_H
 
+#include <stdbool.h>
 #include <stdint.h>
 
 struct net_context;
@@ -10,9 +11,29 @@ typedef void (*transfer_progress_fn)(uint64_t done, uint64_t total);
 typedef void (*transfer_error_fn)(const char *msg);
 typedef void (*transfer_done_fn)(void);
 
+/* Accept callback — called when auto_accept=false to ask user for confirmation.
+   ip, hostname, filename, size describe the incoming transfer.
+   Must return 1 to accept or 0 to reject.
+   Called from the transfer thread — implementation should block until user responds. */
+typedef int (*transfer_accept_fn)(const char *ip, const char *hostname,
+                                  const char *filename, uint64_t size);
+
 void transfer_set_callbacks(transfer_progress_fn prog,
                             transfer_error_fn err,
                             transfer_done_fn done);
+
+/* Set auto_accept mode. When false, the accept callback is invoked before
+   each incoming transfer. */
+void transfer_set_auto_accept(bool enabled);
+
+/* Set the accept callback. Only used when auto_accept is false. */
+void transfer_set_accept_callback(transfer_accept_fn cb);
+
+/* Called from the main/GUI thread to respond to an incoming transfer prompt.
+   transfer_accept()  → proceeds with transfer
+   transfer_reject()  → rejects and closes connection */
+void transfer_accept(void);
+void transfer_reject(void);
 
 /* Send a file over the network.
    nc must already be connected/listening.

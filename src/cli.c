@@ -75,6 +75,31 @@ static void cli_done(void)
     cli_ret = 0;
 }
 
+/* CLI accept callback — prompt user on stdin for incoming transfers */
+static int cli_accept_cb(const char *ip, const char *hostname,
+                         const char *filename, uint64_t size)
+{
+    const char *units[] = {"B","KB","MB","GB"};
+    int u = 0; double s = (double)size;
+    while (s >= 1024 && u < 3) { s /= 1024; u++; }
+    fprintf(stderr, "\n── Incoming Transfer ──\n");
+    fprintf(stderr, "From: %s (%s)\n", ip, hostname[0] ? hostname : "unknown");
+    fprintf(stderr, "File: %s\n", filename);
+    fprintf(stderr, "Size: %.1f %s\n", s, units[u]);
+    fprintf(stderr, "Accept? [y/N]: ");
+    fflush(stderr);
+
+    char answer[16];
+    if (fgets(answer, sizeof(answer), stdin)) {
+        if (answer[0] == 'y' || answer[0] == 'Y') {
+            fprintf(stderr, "Accepted.\n\n");
+            return 1;
+        }
+    }
+    fprintf(stderr, "Rejected.\n\n");
+    return 0;
+}
+
 /* ── Help ──────────────────────────────────────────────────── */
 
 static void print_help(const char *prog)
@@ -277,6 +302,10 @@ int cli_main(int argc, char **argv)
 
     /* ── Set CLI callbacks ────────────────────────────────── */
     transfer_set_callbacks(cli_progress, cli_error, cli_done);
+    transfer_set_auto_accept(cfg.auto_accept);
+
+    /* CLI accept callback — prompt user on stdin */
+    transfer_set_accept_callback(cli_accept_cb);
 
     /* ── Execute ──────────────────────────────────────────── */
 

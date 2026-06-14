@@ -24,6 +24,22 @@
 static transfer_progress_fn g_prog_cb = NULL;
 static transfer_error_fn    g_err_cb  = NULL;
 static transfer_done_fn     g_done_cb = NULL;
+static transfer_accept_fn   g_accept_cb = NULL;
+static bool                 g_auto_accept = true;
+volatile int                g_accept_response = 0;
+volatile bool               g_accept_pending = false;
+
+void transfer_accept(void)
+{
+    g_accept_response = 1;
+    g_accept_pending = false;
+}
+
+void transfer_reject(void)
+{
+    g_accept_response = -1;
+    g_accept_pending = false;
+}
 
 void transfer_set_callbacks(transfer_progress_fn prog,
                             transfer_error_fn err,
@@ -32,6 +48,16 @@ void transfer_set_callbacks(transfer_progress_fn prog,
     g_prog_cb = prog;
     g_err_cb  = err;
     g_done_cb = done;
+}
+
+void transfer_set_auto_accept(bool enabled)
+{
+    g_auto_accept = enabled;
+}
+
+void transfer_set_accept_callback(transfer_accept_fn cb)
+{
+    g_accept_cb = cb;
 }
 
 /* ── Last received filename (for persistent listener history) ── */
@@ -429,6 +455,33 @@ static void tcp_recv_file(struct net_context *nc, const char *savepath)
     strncpy(g_last_recv_name, meta.filename, sizeof(g_last_recv_name) - 1);
 
     bool is_dir = (meta.flags & 0x01) != 0;
+
+    /* ── Auto-accept check ───────────────────────────────── */
+    if (!g_auto_accept && g_accept_cb) {
+        /* Resolve sender hostname from socket peer */
+        struct sockaddr_in peer;
+        socklen_t peer_len = sizeof(peer);
+        char sender_ip[64] = "unknown";
+        char sender_host[256] = "";
+        if (getpeername(fd, (struct sockaddr *)&peer, &peer_len) == 0) {
+            inet_ntop(AF_INET, &peer.sin_addr, sender_ip, sizeof(sender_ip));
+            /* Reverse DNS */
+            struct sockaddr_in sa;
+            memset(&sa, 0, sizeof(sa));
+            sa.sin_family = AF_INET;
+            sa.sin_addr = peer.sin_addr;
+            getnameinfo((const struct sockaddr *)&sa, sizeof(sa),
+                        sender_host, sizeof(sender_host), NULL, 0, 0);
+        }
+        fprintf(stderr, "[RECV] asking user to accept transfer from %s (%s)...\n",
+                sender_ip, sender_host);
+        if (!g_accept_cb(sender_ip, sender_host, meta.filename, meta.total_size)) {
+            fprintf(stderr, "[RECV] transfer rejected by user\n");
+            push_error("Transfer rejected by user");
+            return;
+        }
+        fprintf(stderr, "[RECV] transfer accepted by user\n");
+    }
 
     /* Determine output path */
     char rootpath[1024];

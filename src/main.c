@@ -219,6 +219,38 @@ static void gui_done(void)
     SDL_PushEvent(&ev);
 }
 
+/* ── GUI accept callback (called from transfer thread) ──────── */
+
+/* Need extern access to globals in transfer.c */
+extern volatile int g_accept_response;
+extern volatile bool g_accept_pending;
+
+static int gui_accept_cb(const char *ip, const char *hostname,
+                         const char *filename, uint64_t size)
+{
+    struct event_incoming_transfer *evt = calloc(1, sizeof(*evt));
+    if (!evt) return 0;
+    strncpy(evt->ip, ip, sizeof(evt->ip) - 1);
+    strncpy(evt->hostname, hostname, sizeof(evt->hostname) - 1);
+    strncpy(evt->filename, filename, sizeof(evt->filename) - 1);
+    evt->file_size = size;
+
+    g_accept_response = 0;
+    g_accept_pending = true;
+
+    SDL_Event ev; SDL_memset(&ev, 0, sizeof(ev));
+    ev.type = USEREVENT_INCOMING_TRANSFER;
+    ev.user.data1 = evt;
+    SDL_PushEvent(&ev);
+
+    /* Wait for user response */
+    while (g_accept_pending) {
+        usleep(100000);  /* 100ms poll */
+    }
+
+    return (g_accept_response > 0) ? 1 : 0;
+}
+
 int main(int argc, char **argv)
 {
     /* Check if --gui flag is present */
@@ -268,6 +300,7 @@ int main(int argc, char **argv)
 
     /* Set GUI callbacks to push SDL events */
     transfer_set_callbacks(gui_progress, gui_error, gui_done);
+    transfer_set_accept_callback(gui_accept_cb);
 
     /* Init app state */
     struct app_state state;
@@ -276,26 +309,24 @@ int main(int argc, char **argv)
     state.current_tab = TAB_SCAN;
     state.selected_device = -1;
     state.active_input = 0;
-    struct lanft_config cfg;
-    config_load(&cfg);
-    state.scan_port = cfg.port;
-    state.send_port = cfg.port;
-    state.recv_port = cfg.port;
-    strncpy(state.recv_target_ip, cfg.address, sizeof(state.recv_target_ip) - 1);
-    state.send_protocol = cfg.protocol;
-    state.recv_protocol = cfg.protocol;
-    if (cfg.mode == 0) {
-        /* Config says send — pre-select send tab */
+    config_load(&state.gui_cfg);
+    state.scan_port = state.gui_cfg.port;
+    state.send_port = state.gui_cfg.port;
+    state.recv_port = state.gui_cfg.port;
+    strncpy(state.recv_target_ip, state.gui_cfg.address, sizeof(state.recv_target_ip) - 1);
+    state.send_protocol = state.gui_cfg.protocol;
+    state.recv_protocol = state.gui_cfg.protocol;
+    if (state.gui_cfg.mode == 0) {
         state.current_tab = TAB_SEND;
-    } else if (cfg.mode == 1) {
-        /* Config says receive — pre-select receive tab */
+    } else if (state.gui_cfg.mode == 1) {
         state.current_tab = TAB_RECEIVE;
     }
-    /* Apply save_dir if set in config */
-    if (cfg.save_dir[0]) {
-        const char *expanded = config_expand_path(cfg.save_dir);
+    if (state.gui_cfg.save_dir[0]) {
+        const char *expanded = config_expand_path(state.gui_cfg.save_dir);
         strncpy(state.recv_savepath, expanded, sizeof(state.recv_savepath) - 1);
     }
+    /* Apply auto_accept setting to transfer module */
+    transfer_set_auto_accept(state.gui_cfg.auto_accept);
     strncpy(state.status_text, "Ready — select a tab to begin",
             sizeof(state.status_text) - 1);
     SDL_GetWindowSize(window, &state.window_w, &state.window_h);
@@ -430,7 +461,6 @@ int main(int argc, char **argv)
             }
 
             case USEREVENT_ZENITY_RESULT: {
-                /* Zenity dialog returned — update file path */
                 const char *path = (const char *)event.user.data1;
                 int target = event.user.code;
                 if (path && target == 1) {
@@ -439,7 +469,27 @@ int main(int argc, char **argv)
                 } else if (path && target == 2) {
                     strncpy(state.recv_savepath, path, sizeof(state.recv_savepath) - 1);
                     snprintf(state.status_text, sizeof(state.status_text), "Save to: %s", path);
+                } else if (path && target == 3) {
+                    strncpy(state.gui_cfg.save_dir, path, sizeof(state.gui_cfg.save_dir) - 1);
+                    snprintf(state.status_text, sizeof(state.status_text), "Save dir: %s", path);
                 }
+                break;
+            }
+
+            case USEREVENT_INCOMING_TRANSFER: {
+                struct event_incoming_transfer *evt =
+                    (struct event_incoming_transfer *)event.user.data1;
+                if (evt) {
+                    strncpy(state.incoming_ip, evt->ip,
+                            sizeof(state.incoming_ip) - 1);
+                    strncpy(state.incoming_hostname, evt->hostname,
+                            sizeof(state.incoming_hostname) - 1);
+                    strncpy(state.incoming_filename, evt->filename,
+                            sizeof(state.incoming_filename) - 1);
+                    state.incoming_size = evt->file_size;
+                    state.incoming_active = true;
+                }
+                free(evt);
                 break;
             }
 
@@ -542,11 +592,15 @@ int main(int argc, char **argv)
         }
         if (!state.recv_running) pending_recv = false;
 
+        /* Sync auto_accept from settings page to transfer module */
+        transfer_set_auto_accept(state.gui_cfg.auto_accept);
+
         ui_render(renderer, &state);
         SDL_Delay(16);
     }
 
     history_save(&state);
+    config_save(&state.gui_cfg);
     ui_cleanup();
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
