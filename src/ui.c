@@ -1293,64 +1293,99 @@ bool ui_handle_event(SDL_Event *e, struct app_state *st)
         }
     }
 
+    /* ── Helper: sync input_buffer back to the bound field ────── */
+    /* (defined once, used by TEXTINPUT, BACKSPACE, DELETE, RETURN) */
+
     /* Keyboard input for text fields */
     if (e->type == SDL_TEXTINPUT && st->active_input > 0) {
         size_t len = strlen(st->input_buffer);
         size_t tlen = strlen(e->text.text);
         if (len + tlen < sizeof(st->input_buffer) - 1) {
-            strcat(st->input_buffer, e->text.text);
-            st->input_cursor = strlen(st->input_buffer);
-            if (st->active_input == 2)
-                strncpy(st->send_target_ip, st->input_buffer, sizeof(st->send_target_ip) - 1);
-            if (st->active_input == 4)
-                strncpy(st->recv_target_ip, st->input_buffer, sizeof(st->recv_target_ip) - 1);
-            if (st->active_input == 5)
-                st->send_port = atoi(st->input_buffer);
-            if (st->active_input == 6)
-                st->recv_port = atoi(st->input_buffer);
-            if (st->active_input == 7)
-                st->scan_port = atoi(st->input_buffer);
-            /* Settings page numeric fields (10-18) */
-            if (st->active_input == 10) st->gui_cfg.port = atoi(st->input_buffer);
-            if (st->active_input == 11) strncpy(st->gui_cfg.address, st->input_buffer, sizeof(st->gui_cfg.address) - 1);
-            if (st->active_input == 12) strncpy(st->gui_cfg.save_dir, st->input_buffer, sizeof(st->gui_cfg.save_dir) - 1);
-            if (st->active_input == 13) st->gui_cfg.buffer_size = atoi(st->input_buffer);
-            if (st->active_input == 14) st->gui_cfg.timeout_seconds = atoi(st->input_buffer);
-            if (st->active_input == 15) st->gui_cfg.max_connections = atoi(st->input_buffer);
-            if (st->active_input == 16) st->gui_cfg.send_bandwidth_limit = atoi(st->input_buffer);
-            if (st->active_input == 17) st->gui_cfg.discovery_interval = atoi(st->input_buffer);
-            if (st->active_input == 18) st->gui_cfg.discovery_ttl = atoi(st->input_buffer);
+            /* Insert at cursor position, not just append */
+            memmove(st->input_buffer + st->input_cursor + tlen,
+                    st->input_buffer + st->input_cursor,
+                    len - st->input_cursor + 1);
+            memcpy(st->input_buffer + st->input_cursor, e->text.text, tlen);
+            st->input_cursor += tlen;
         }
-        return true;
+        goto sync_field;
     }
 
     if (e->type == SDL_KEYDOWN) {
+        int len = strlen(st->input_buffer);
+
+        /* Backspace */
         if (e->key.keysym.sym == SDLK_BACKSPACE && st->active_input > 0) {
-            int len = strlen(st->input_buffer);
             if (len > 0 && st->input_cursor > 0) {
                 memmove(st->input_buffer + st->input_cursor - 1,
                         st->input_buffer + st->input_cursor,
                         len - st->input_cursor + 1);
                 st->input_cursor--;
             }
-            if (st->active_input == 2)
-                strncpy(st->send_target_ip, st->input_buffer, sizeof(st->send_target_ip) - 1);
-            if (st->active_input == 4)
-                strncpy(st->recv_target_ip, st->input_buffer, sizeof(st->recv_target_ip) - 1);
-            if (st->active_input == 5)
-                st->send_port = atoi(st->input_buffer);
-            if (st->active_input == 6)
-                st->recv_port = atoi(st->input_buffer);
-            if (st->active_input == 7)
-                st->scan_port = atoi(st->input_buffer);
+            goto sync_field;
+        }
+
+        /* Delete */
+        if (e->key.keysym.sym == SDLK_DELETE && st->active_input > 0) {
+            if (st->input_cursor < len) {
+                memmove(st->input_buffer + st->input_cursor,
+                        st->input_buffer + st->input_cursor + 1,
+                        len - st->input_cursor);
+            }
+            goto sync_field;
+        }
+
+        /* Cursor movement */
+        if (e->key.keysym.sym == SDLK_LEFT && st->active_input > 0) {
+            if (st->input_cursor > 0) st->input_cursor--;
             return true;
         }
+        if (e->key.keysym.sym == SDLK_RIGHT && st->active_input > 0) {
+            if (st->input_cursor < len) st->input_cursor++;
+            return true;
+        }
+        if (e->key.keysym.sym == SDLK_HOME && st->active_input > 0) {
+            st->input_cursor = 0;
+            return true;
+        }
+        if (e->key.keysym.sym == SDLK_END && st->active_input > 0) {
+            st->input_cursor = len;
+            return true;
+        }
+
+        /* Confirm / cancel input */
         if (e->key.keysym.sym == SDLK_RETURN || e->key.keysym.sym == SDLK_ESCAPE) {
             st->active_input = 0;
             SDL_StopTextInput();
             return true;
         }
     }
+
+    return false;
+
+sync_field:
+    /* Sync input_buffer to the bound state field */
+    if (st->active_input == 2)
+        strncpy(st->send_target_ip, st->input_buffer, sizeof(st->send_target_ip) - 1);
+    if (st->active_input == 4)
+        strncpy(st->recv_target_ip, st->input_buffer, sizeof(st->recv_target_ip) - 1);
+    if (st->active_input == 5)
+        st->send_port = atoi(st->input_buffer);
+    if (st->active_input == 6)
+        st->recv_port = atoi(st->input_buffer);
+    if (st->active_input == 7)
+        st->scan_port = atoi(st->input_buffer);
+    /* Settings page fields (10-18) */
+    if (st->active_input == 10) st->gui_cfg.port = atoi(st->input_buffer);
+    if (st->active_input == 11) strncpy(st->gui_cfg.address, st->input_buffer, sizeof(st->gui_cfg.address) - 1);
+    if (st->active_input == 12) strncpy(st->gui_cfg.save_dir, st->input_buffer, sizeof(st->gui_cfg.save_dir) - 1);
+    if (st->active_input == 13) st->gui_cfg.buffer_size = atoi(st->input_buffer);
+    if (st->active_input == 14) st->gui_cfg.timeout_seconds = atoi(st->input_buffer);
+    if (st->active_input == 15) st->gui_cfg.max_connections = atoi(st->input_buffer);
+    if (st->active_input == 16) st->gui_cfg.send_bandwidth_limit = atoi(st->input_buffer);
+    if (st->active_input == 17) st->gui_cfg.discovery_interval = atoi(st->input_buffer);
+    if (st->active_input == 18) st->gui_cfg.discovery_ttl = atoi(st->input_buffer);
+    return true;
 
     return false;
 }
