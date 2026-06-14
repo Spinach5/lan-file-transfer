@@ -35,6 +35,11 @@ void transfer_set_accept_callback(transfer_accept_fn cb);
 void transfer_accept(void);
 void transfer_reject(void);
 
+/* Apply runtime config to transfer module */
+void transfer_set_buffer_size(int size);
+void transfer_set_timeout(int seconds);
+void transfer_set_overwrite_policy(const char *policy);  /* "rename"|"overwrite"|"skip" */
+
 /* Send a file over the network.
    nc must already be connected/listening.
    Runs the transfer loop — call from a worker thread. */

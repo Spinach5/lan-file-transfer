@@ -318,6 +318,9 @@ int cli_main(int argc, char **argv)
     /* ── Set CLI callbacks ────────────────────────────────── */
     transfer_set_callbacks(cli_progress, cli_error, cli_done);
     transfer_set_auto_accept(cfg.auto_accept);
+    transfer_set_buffer_size(cfg.buffer_size);
+    transfer_set_timeout(cfg.timeout_seconds);
+    transfer_set_overwrite_policy(cfg.overwrite_policy);
 
     /* CLI accept callback — prompt user on stdin */
     transfer_set_accept_callback(cli_accept_cb);

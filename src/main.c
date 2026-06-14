@@ -325,8 +325,11 @@ int main(int argc, char **argv)
         const char *expanded = config_expand_path(state.gui_cfg.save_dir);
         strncpy(state.recv_savepath, expanded, sizeof(state.recv_savepath) - 1);
     }
-    /* Apply auto_accept setting to transfer module */
+    /* Apply config settings to transfer module */
     transfer_set_auto_accept(state.gui_cfg.auto_accept);
+    transfer_set_buffer_size(state.gui_cfg.buffer_size);
+    transfer_set_timeout(state.gui_cfg.timeout_seconds);
+    transfer_set_overwrite_policy(state.gui_cfg.overwrite_policy);
     strncpy(state.status_text, "Ready — select a tab to begin",
             sizeof(state.status_text) - 1);
     SDL_GetWindowSize(window, &state.window_w, &state.window_h);

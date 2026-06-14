@@ -41,6 +41,31 @@ void transfer_reject(void)
     g_accept_pending = false;
 }
 
+/* ── Runtime config ─────────────────────────────────────────── */
+#define MAX_CHUNK_SIZE  (1024 * 1024)   /* 1 MiB ceiling */
+static uint8_t  g_chunk_buf[MAX_CHUNK_SIZE];
+static int      g_buffer_size       = 65536;
+static int      g_timeout_seconds   = 30;
+static char     g_overwrite_policy[16] = "rename";
+
+void transfer_set_buffer_size(int size)
+{
+    if (size > 0 && size <= MAX_CHUNK_SIZE)
+        g_buffer_size = size;
+}
+
+void transfer_set_timeout(int seconds)
+{
+    if (seconds >= 0)
+        g_timeout_seconds = seconds;
+}
+
+void transfer_set_overwrite_policy(const char *policy)
+{
+    if (policy && policy[0])
+        strncpy(g_overwrite_policy, policy, sizeof(g_overwrite_policy) - 1);
+}
+
 void transfer_set_callbacks(transfer_progress_fn prog,
                             transfer_error_fn err,
                             transfer_done_fn done)
@@ -174,8 +199,8 @@ static int sock_write_full(socket_t fd, const void *buf, size_t len)
         fd_set fds;
         FD_ZERO(&fds);
         FD_SET(fd, &fds);
-        /* Wait up to 5s for writability */
-        struct timeval tv = {5, 0};
+        /* Wait for writability (use config timeout) */
+        struct timeval tv = {g_timeout_seconds > 0 ? g_timeout_seconds : 5, 0};
         int ret = select(fd + 1, NULL, &fds, NULL, &tv);
         if (ret <= 0) return -1;
         ssize_t n = sock_write(fd, p + sent, len - sent);
@@ -370,7 +395,8 @@ static int tcp_send_file(struct net_context *nc, const char *filepath,
     fprintf(stderr, "[SEND] waiting for meta response...\n");
     struct ft_meta_resp resp;
     memset(&resp, 0, sizeof(resp));
-    if (sock_read_full(fd, &resp, sizeof(resp), 300000) == 0 &&
+    int meta_timeout_ms = (g_timeout_seconds > 0) ? g_timeout_seconds * 1000 : 300000;
+    if (sock_read_full(fd, &resp, sizeof(resp), meta_timeout_ms) == 0 &&
         resp.magic == FT_MAGIC) {
         resume_offset = resp.resume_offset;
         fprintf(stderr, "[SEND] got meta response, resume_offset=%lu\n", (unsigned long)resume_offset);
@@ -400,13 +426,12 @@ static int tcp_send_file(struct net_context *nc, const char *filepath,
         fseek(fp, (long)resume_offset, SEEK_SET);
         sent = resume_offset;
 
-        uint8_t buf[FT_TCP_CHUNK_SIZE];
         while (sent < total) {
-            size_t to_read = (total - sent) > FT_TCP_CHUNK_SIZE
-                             ? FT_TCP_CHUNK_SIZE : (size_t)(total - sent);
-            size_t n = fread(buf, 1, to_read, fp);
+            size_t to_read = (total - sent) > (uint64_t)g_buffer_size
+                             ? (size_t)g_buffer_size : (size_t)(total - sent);
+            size_t n = fread(g_chunk_buf, 1, to_read, fp);
             if (n == 0) break;
-            if (sock_write_full(fd, buf, n) != 0) {
+            if (sock_write_full(fd, g_chunk_buf, n) != 0) {
                 push_error("Send failed at %lu / %lu bytes",
                            (unsigned long)sent, (unsigned long)total);
                 fclose(fp);
@@ -439,7 +464,8 @@ static void tcp_recv_file(struct net_context *nc, const char *savepath)
     /* Read meta */
     fprintf(stderr, "[RECV] waiting for meta...\n");
     struct ft_meta meta;
-    if (sock_read_full(fd, &meta, sizeof(meta), 30000) != 0) {
+    int meta_timeout_ms = (g_timeout_seconds > 0) ? g_timeout_seconds * 1000 : 30000;
+    if (sock_read_full(fd, &meta, sizeof(meta), meta_timeout_ms) != 0) {
         fprintf(stderr, "[RECV] FAILED to receive meta!\n");
         push_error("Failed to receive file metadata (timeout)");
         return;
@@ -510,37 +536,73 @@ static void tcp_recv_file(struct net_context *nc, const char *savepath)
 
     /* Receive file data (as single file) */
     uint64_t received = resume_offset;
-    uint8_t buf[FT_TCP_CHUNK_SIZE];
 
-    FILE *fp = fopen(rootpath, resume_offset > 0 ? "ab" : "wb");
+    /* ── Overwrite policy ────────────────────────────────── */
+    char final_path[1024];
+    strncpy(final_path, rootpath, sizeof(final_path) - 1);
+
+    if (resume_offset == 0) {
+        struct stat exist_st;
+        if (stat(rootpath, &exist_st) == 0) {
+            if (strcmp(g_overwrite_policy, "skip") == 0) {
+                fprintf(stderr, "[RECV] file exists, skipping: %s\n", rootpath);
+                push_error("File already exists (overwrite_policy=skip)");
+                return;
+            } else if (strcmp(g_overwrite_policy, "rename") == 0) {
+                /* Generate a new name: file (1).ext, file (2).ext, ... */
+                char base[900], ext[128];
+                const char *dot = strrchr(meta.filename, '.');
+                if (dot && dot != meta.filename) {
+                    size_t blen = dot - meta.filename;
+                    if (blen > sizeof(base) - 1) blen = sizeof(base) - 1;
+                    memcpy(base, meta.filename, blen); base[blen] = '\0';
+                    strncpy(ext, dot, sizeof(ext) - 1);
+                } else {
+                    strncpy(base, meta.filename, sizeof(base) - 1);
+                    ext[0] = '\0';
+                }
+                int n = 1;
+                while (n < 1000) {
+                    snprintf(final_path, sizeof(final_path), "%s/%s (%d)%s",
+                             savepath, base, n, ext);
+                    if (stat(final_path, &exist_st) != 0) break;
+                    n++;
+                }
+                fprintf(stderr, "[RECV] file exists, renamed to: %s\n", final_path);
+            }
+            /* "overwrite" → just use rootpath as-is (wb mode truncates) */
+        }
+    }
+
+    FILE *fp = fopen(final_path, resume_offset > 0 ? "ab" : "wb");
     if (!fp) {
-        push_error("Cannot create file: %s", rootpath);
+        push_error("Cannot create file: %s", final_path);
         return;
     }
     if (resume_offset > 0) fseek(fp, (long)resume_offset, SEEK_SET);
 
     while (received < meta.total_size) {
-        size_t to_read = (meta.total_size - received) > FT_TCP_CHUNK_SIZE
-                         ? FT_TCP_CHUNK_SIZE : (size_t)(meta.total_size - received);
+        size_t to_read = (meta.total_size - received) > (uint64_t)g_buffer_size
+                         ? (size_t)g_buffer_size : (size_t)(meta.total_size - received);
 
         fd_set fds;
         FD_ZERO(&fds);
         FD_SET(fd, &fds);
-        struct timeval tv = {30, 0};
+        struct timeval tv = {g_timeout_seconds > 0 ? g_timeout_seconds : 30, 0};
         if (select(fd + 1, &fds, NULL, NULL, &tv) <= 0) {
             push_error("Receive timeout");
             fclose(fp);
             return;
         }
 
-        ssize_t n = sock_read(fd, buf, to_read);
+        ssize_t n = sock_read(fd, g_chunk_buf, to_read);
         if (n <= 0) {
             push_error("Receive failed");
             fclose(fp);
             return;
         }
 
-        fwrite(buf, 1, n, fp);
+        fwrite(g_chunk_buf, 1, n, fp);
         received += n;
         fprintf(stderr, "[RECV] progress %lu/%lu\n", (unsigned long)received, (unsigned long)meta.total_size);
         push_progress(received, meta.total_size);
@@ -549,10 +611,10 @@ static void tcp_recv_file(struct net_context *nc, const char *savepath)
 
     /* If directory: extract the .tar.gz archive */
     if (is_dir && received >= meta.total_size) {
-        fprintf(stderr, "[RECV] extracting archive %s to %s...\n", rootpath, savepath);
-        if (extract_archive(rootpath, savepath) == 0) {
+        fprintf(stderr, "[RECV] extracting archive %s to %s...\n", final_path, savepath);
+        if (extract_archive(final_path, savepath) == 0) {
             fprintf(stderr, "[RECV] extraction complete\n");
-            unlink(rootpath);  /* remove temp archive */
+            unlink(final_path);  /* remove temp archive */
         } else {
             push_error("Failed to extract archive");
             return;
