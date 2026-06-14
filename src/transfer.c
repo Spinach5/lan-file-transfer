@@ -456,16 +456,36 @@ static void tcp_recv_file(struct net_context *nc, const char *savepath)
 
     bool is_dir = (meta.flags & 0x01) != 0;
 
-    /* ── Auto-accept check ───────────────────────────────── */
+    /* Determine output path and calculate resume offset */
+    char rootpath[1024];
+    snprintf(rootpath, sizeof(rootpath), "%s/%s", savepath, meta.filename);
+    uint64_t local_size = file_size(rootpath);
+    uint64_t resume_offset = 0;
+    if (!is_dir && local_size > 0 && local_size < meta.total_size) {
+        resume_offset = local_size;
+    }
+
+    /* Send meta response FIRST — sender only waits 2s for this.
+       Don't let the accept prompt cause a timeout. */
+    struct ft_meta_resp resp;
+    memset(&resp, 0, sizeof(resp));
+    resp.magic = FT_MAGIC;
+    resp.resume_offset = resume_offset;
+    if (sock_write_full(fd, &resp, sizeof(resp)) != 0) {
+        push_error("Failed to send meta response");
+        return;
+    }
+    fprintf(stderr, "[RECV] meta response sent, resume_offset=%lu\n",
+            (unsigned long)resume_offset);
+
+    /* ── Auto-accept check (after meta response to avoid sender timeout) */
     if (!g_auto_accept && g_accept_cb) {
-        /* Resolve sender hostname from socket peer */
         struct sockaddr_in peer;
         socklen_t peer_len = sizeof(peer);
         char sender_ip[64] = "unknown";
         char sender_host[256] = "";
         if (getpeername(fd, (struct sockaddr *)&peer, &peer_len) == 0) {
             inet_ntop(AF_INET, &peer.sin_addr, sender_ip, sizeof(sender_ip));
-            /* Reverse DNS */
             struct sockaddr_in sa;
             memset(&sa, 0, sizeof(sa));
             sa.sin_family = AF_INET;
@@ -481,28 +501,6 @@ static void tcp_recv_file(struct net_context *nc, const char *savepath)
             return;
         }
         fprintf(stderr, "[RECV] transfer accepted by user\n");
-    }
-
-    /* Determine output path */
-    char rootpath[1024];
-    snprintf(rootpath, sizeof(rootpath), "%s/%s", savepath, meta.filename);
-
-    /* Calculate resume behavior */
-    uint64_t local_size = file_size(rootpath);
-    uint64_t resume_offset = 0;
-
-    if (!is_dir && local_size > 0 && local_size < meta.total_size) {
-        resume_offset = local_size;
-    }
-
-    /* Send meta response */
-    struct ft_meta_resp resp;
-    memset(&resp, 0, sizeof(resp));
-    resp.magic = FT_MAGIC;
-    resp.resume_offset = resume_offset;
-    if (sock_write_full(fd, &resp, sizeof(resp)) != 0) {
-        push_error("Failed to send meta response");
-        return;
     }
 
     fprintf(stderr, "[RECV] ready for data, total=%lu, is_dir=%d\n",
