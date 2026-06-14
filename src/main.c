@@ -13,6 +13,7 @@
 #include <unistd.h>
 #include <pthread.h>
 #include <SDL2/SDL.h>
+#include "config.h"
 
 /* ═══════════════════════════════════════════════════════════
    Transfer thread wrappers
@@ -275,12 +276,26 @@ int main(int argc, char **argv)
     state.current_tab = TAB_SCAN;
     state.selected_device = -1;
     state.active_input = 0;
-    state.scan_port = FT_DEFAULT_PORT;
-    state.send_port = FT_DEFAULT_PORT;
-    state.recv_port = FT_DEFAULT_PORT;
-    strncpy(state.recv_target_ip, "0.0.0.0", sizeof(state.recv_target_ip) - 1);
-    state.send_protocol = FT_PROTO_TCP;
-    state.recv_protocol = FT_PROTO_TCP;
+    struct lanft_config cfg;
+    config_load(&cfg);
+    state.scan_port = cfg.port;
+    state.send_port = cfg.port;
+    state.recv_port = cfg.port;
+    strncpy(state.recv_target_ip, cfg.address, sizeof(state.recv_target_ip) - 1);
+    state.send_protocol = cfg.protocol;
+    state.recv_protocol = cfg.protocol;
+    if (cfg.mode == 0) {
+        /* Config says send — pre-select send tab */
+        state.current_tab = TAB_SEND;
+    } else if (cfg.mode == 1) {
+        /* Config says receive — pre-select receive tab */
+        state.current_tab = TAB_RECEIVE;
+    }
+    /* Apply save_dir if set in config */
+    if (cfg.save_dir[0]) {
+        const char *expanded = config_expand_path(cfg.save_dir);
+        strncpy(state.recv_savepath, expanded, sizeof(state.recv_savepath) - 1);
+    }
     strncpy(state.status_text, "Ready — select a tab to begin",
             sizeof(state.status_text) - 1);
     SDL_GetWindowSize(window, &state.window_w, &state.window_h);
