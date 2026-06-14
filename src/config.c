@@ -204,14 +204,13 @@ int config_load(struct lanft_config *cfg)
 #endif
             if (slash) {
                 *slash = '\0';
-                char tmp[512];
                 for (char *p = dirbuf; *p; p++) {
                     if ((*p == '/' || *p == '\\') && p > dirbuf) {
                         char saved = *p; *p = '\0';
 #ifdef _WIN32
-                        mkdir(tmp);
+                        mkdir(dirbuf);
 #else
-                        mkdir(tmp, 0755);
+                        mkdir(dirbuf, 0755);
 #endif
                         *p = saved;
                     }
