@@ -7,6 +7,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <errno.h>
+#include <time.h>
 
 #ifdef _WIN32
 #include <shlobj.h>
@@ -67,6 +68,41 @@ const char *config_expand_path(const char *path)
     return path;
 }
 
+const char *config_log_path(const struct lanft_config *cfg)
+{
+    static char buf[1024];
+
+    if (!cfg->log_file[0]) return NULL;  /* empty → stderr */
+
+    size_t len = strlen(cfg->log_file);
+    bool is_dir = (cfg->log_file[len - 1] == '/' || cfg->log_file[len - 1] == '\\');
+    if (!is_dir) {
+        /* Check if the path is an existing directory */
+        struct stat st;
+        if (stat(cfg->log_file, &st) == 0 && S_ISDIR(st.st_mode))
+            is_dir = true;
+    }
+
+    if (is_dir) {
+        /* Directory → generate date-based filename: YYYYMMDD-level.log */
+        time_t now = time(NULL);
+        struct tm *tm = localtime(&now);
+        char dir[1024];
+        snprintf(dir, sizeof(dir), "%s", cfg->log_file);
+        /* Ensure trailing slash */
+        if (dir[len - 1] != '/' && dir[len - 1] != '\\') {
+            if (len < sizeof(dir) - 1) { dir[len] = '/'; dir[len + 1] = '\0'; }
+        }
+        snprintf(buf, sizeof(buf), "%s%04d%02d%02d-%s.log",
+                 dir,
+                 tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday,
+                 cfg->log_level[0] ? cfg->log_level : "info");
+        return buf;
+    }
+
+    return cfg->log_file;  /* exact file path */
+}
+
 /* ── Defaults ──────────────────────────────────────────────── */
 
 void config_set_defaults(struct lanft_config *cfg)
@@ -87,7 +123,7 @@ void config_set_defaults(struct lanft_config *cfg)
     cfg->discovery_interval = 5;
     cfg->discovery_ttl      = 1;
     strncpy(cfg->log_level, "info", sizeof(cfg->log_level) - 1);
-    cfg->log_file[0]        = '\0';
+    strncpy(cfg->log_file, "/var/log/lanft/", sizeof(cfg->log_file) - 1);
     cfg->send_bandwidth_limit = 0;
 }
 
@@ -348,6 +384,9 @@ void config_print(const struct lanft_config *cfg)
     printf("discovery_ttl = %d\n", cfg->discovery_ttl);
     printf("\n# Logging\n");
     printf("log_level = \"%s\"\n", cfg->log_level);
-    printf("log_file = \"%s\"\n", cfg->log_file[0] ? cfg->log_file : "(stderr)");
+    {
+        const char *lp = config_log_path(cfg);
+        printf("log_file = \"%s\"\n", lp ? lp : "(stderr)");
+    }
     printf("send_bandwidth_limit = %d\n", cfg->send_bandwidth_limit);
 }

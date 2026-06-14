@@ -68,4 +68,11 @@ const char *config_system_path(void);
 /* Expand ~ in a path to $HOME. Returns a static buffer. */
 const char *config_expand_path(const char *path);
 
+/* Generate the actual log file path.
+   If log_file is empty → returns NULL (log to stderr).
+   If log_file ends with / → appends YYYYMMDD-level.log inside that dir.
+   Otherwise → returns log_file as-is.
+   Returns a static buffer. */
+const char *config_log_path(const struct lanft_config *cfg);
+
 #endif /* CONFIG_H */
