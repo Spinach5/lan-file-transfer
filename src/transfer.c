@@ -370,7 +370,7 @@ static int tcp_send_file(struct net_context *nc, const char *filepath,
     fprintf(stderr, "[SEND] waiting for meta response...\n");
     struct ft_meta_resp resp;
     memset(&resp, 0, sizeof(resp));
-    if (sock_read_full(fd, &resp, sizeof(resp), 2000) == 0 &&
+    if (sock_read_full(fd, &resp, sizeof(resp), 300000) == 0 &&
         resp.magic == FT_MAGIC) {
         resume_offset = resp.resume_offset;
         fprintf(stderr, "[SEND] got meta response, resume_offset=%lu\n", (unsigned long)resume_offset);
@@ -465,20 +465,7 @@ static void tcp_recv_file(struct net_context *nc, const char *savepath)
         resume_offset = local_size;
     }
 
-    /* Send meta response FIRST — sender only waits 2s for this.
-       Don't let the accept prompt cause a timeout. */
-    struct ft_meta_resp resp;
-    memset(&resp, 0, sizeof(resp));
-    resp.magic = FT_MAGIC;
-    resp.resume_offset = resume_offset;
-    if (sock_write_full(fd, &resp, sizeof(resp)) != 0) {
-        push_error("Failed to send meta response");
-        return;
-    }
-    fprintf(stderr, "[RECV] meta response sent, resume_offset=%lu\n",
-            (unsigned long)resume_offset);
-
-    /* ── Auto-accept check (after meta response to avoid sender timeout) */
+    /* ── Auto-accept check (BEFORE meta response — sender has 5min timeout) */
     if (!g_auto_accept && g_accept_cb) {
         struct sockaddr_in peer;
         socklen_t peer_len = sizeof(peer);
@@ -501,6 +488,21 @@ static void tcp_recv_file(struct net_context *nc, const char *savepath)
             return;
         }
         fprintf(stderr, "[RECV] transfer accepted by user\n");
+    }
+
+    /* Send meta response now that user has accepted.
+       Sender waits up to 5 minutes for this. */
+    {
+        struct ft_meta_resp resp;
+        memset(&resp, 0, sizeof(resp));
+        resp.magic = FT_MAGIC;
+        resp.resume_offset = resume_offset;
+        if (sock_write_full(fd, &resp, sizeof(resp)) != 0) {
+            push_error("Failed to send meta response");
+            return;
+        }
+        fprintf(stderr, "[RECV] meta response sent, resume_offset=%lu\n",
+                (unsigned long)resume_offset);
     }
 
     fprintf(stderr, "[RECV] ready for data, total=%lu, is_dir=%d\n",
