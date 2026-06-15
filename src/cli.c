@@ -13,7 +13,7 @@
 
 #define CLI_VERSION "lanft v1.0"
 
-/* ── Progress bar ──────────────────────────────────────────── */
+/* --- Progress bar ------------------------------------------------------------------ */
 
 static uint64_t cli_start_ms;
 static uint64_t cli_total;
@@ -83,7 +83,7 @@ static int cli_accept_cb(const char *ip, const char *hostname,
     const char *units[] = {"B","KB","MB","GB"};
     int u = 0; double s = (double)size;
     while (s >= 1024 && u < 3) { s /= 1024; u++; }
-    log_write("\n── Incoming Transfer ──\n");
+    log_write("\n--- Incoming Transfer ---\n");
     log_write("From: %s (%s)\n", ip, hostname[0] ? hostname : "unknown");
     log_write("File: %s\n", filename);
     log_write("Size: %.1f %s\n", s, units[u]);
@@ -101,7 +101,7 @@ static int cli_accept_cb(const char *ip, const char *hostname,
     return 0;
 }
 
-/* ── Help ──────────────────────────────────────────────────── */
+/* --- Help ------------------------------------------------------------------------------ */
 
 static void print_help(const char *prog)
 {
@@ -139,10 +139,14 @@ static void print_help(const char *prog)
     printf("  Recv:   %s --mode=R --address=10.0.0.5 -p 5555 ./received/\n", prog);
 }
 
-/* ── Main ──────────────────────────────────────────────────── */
+/* --- Main ------------------------------------------------------------------------------ */
 
 int cli_main(int argc, char **argv)
 {
+    /* Windows: set console to UTF-8 so Chinese/box-drawing chars render */
+#ifdef _WIN32
+    system("chcp 65001 > nul 2>&1");
+#endif
     struct lanft_config cfg;
     config_load(&cfg);
     log_init(&cfg);
@@ -246,7 +250,7 @@ int cli_main(int argc, char **argv)
         }
     }
 
-    /* ── History ─────────────────────────────────────────── */
+    /* --- History ---------------------------------------------------------------─ */
     {
         bool show_history = false;
         for (int i = 1; i < argc; i++) {
@@ -281,7 +285,7 @@ int cli_main(int argc, char **argv)
     /* Re-init log with CLI-overridden config (e.g. --log-file) */
     log_init(&cfg);
 
-    /* ── Validation ──────────────────────────────────────── */
+    /* --- Validation ------------------------------------------------------------ */
     if (cfg.mode < 0) {
         log_write("Error: --mode is required (S=send, R=receive)\n\n");
         print_help(argv[0]);
@@ -325,7 +329,7 @@ int cli_main(int argc, char **argv)
         }
     }
 
-    /* ── Set CLI callbacks ────────────────────────────────── */
+    /* --- Set CLI callbacks --------------------------------------------------- */
     transfer_set_callbacks(cli_progress, cli_error, cli_done);
     transfer_set_auto_accept(cfg.auto_accept);
     transfer_set_buffer_size(cfg.buffer_size);
@@ -335,7 +339,7 @@ int cli_main(int argc, char **argv)
     /* CLI accept callback — prompt user on stdin */
     transfer_set_accept_callback(cli_accept_cb);
 
-    /* ── Execute ──────────────────────────────────────────── */
+    /* --- Execute ------------------------------------------------------------------ */
 
     cli_ret = 1;
 
