@@ -1,9 +1,9 @@
 # lanft — LAN File Transfer Tool
 
-[![Version](https://img.shields.io/badge/version-v1.0.0-blue.svg)](https://gitee.com/dzh258/lan-file-transfer/releases)
+[![Version](https://img.shields.io/badge/version-v1.0.0-blue.svg)](https://gitee.com/dzh258/lanft/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Gitee stars](https://gitee.com/dzh258/lan-file-transfer/badge/star.svg?theme=dark)](https://gitee.com/dzh258/lan-file-transfer)
-[![GitHub stars](https://img.shields.io/github/stars/Spinach5/lan-file-transfer?style=social)](https://github.com/Spinach5/lan-file-transfer)
+[![Gitee stars](https://gitee.com/dzh258/lanft/badge/star.svg?theme=dark)](https://gitee.com/dzh258/lanft)
+[![GitHub stars](https://img.shields.io/github/stars/Spinach5/lanft?style=social)](https://github.com/Spinach5/lanft)
 
 English | [中文](./README_CN.md)
 
@@ -141,7 +141,7 @@ make -j$(nproc)
 # Run GUI (requires Termux:X11 app)
 termux-x11 :0 &
 export DISPLAY=:0
-./lanft
+./lanft --gui
 ```
 
 ---
@@ -212,7 +212,7 @@ websocket/
 ### GUI Mode
 
 ```bash
-./lanft
+./lanft --gui
 ```
 
 Opens SDL2 window with four tabs:
@@ -229,7 +229,9 @@ Opens SDL2 window with four tabs:
 2. Sender: Send File → Browse file → enter receiver IP → Start Send
 3. Both sides show progress bar; completion logged to History
 
-### CLI Mode
+### CLI Mode (default)
+
+CLI is the default mode — no flags needed.
 
 ```bash
 # Send
@@ -242,6 +244,9 @@ lanft --mode=R ./downloads/
 lanft -R -p 5555 ./received/
 lanft --mode=R --address=10.84.183.2 -p 5555 ./received/
 
+# GUI
+lanft --gui
+
 # Info
 lanft --help
 lanft --version
@@ -252,6 +257,7 @@ lanft --history
 
 | Short | Long | Default | Description |
 |-------|------|---------|-------------|
+| | `--gui` | — | Launch SDL2 GUI (CLI is default) |
 | `-h` | `--help` | — | Print help and exit |
 | `-v` | `--version` | — | Print version and exit |
 | `-S` | — | — | Shorthand for `--mode=S` (send) |
@@ -294,4 +300,4 @@ Sender   (client):  net_connect → send meta → read response → send data
 MIT
 
 ## Star History
-[![Star History Chart](https://api.star-history.com/chart?repos=Spinach5/lan-file-transfer&type=date&logscale&legend=top-left)](https://www.star-history.com/?repos=Spinach5%2Flan-file-transfer&type=date&logscale=&legend=top-left)
+[![Star History Chart](https://api.star-history.com/chart?repos=Spinach5/lanft&type=date&logscale&legend=top-left)](https://www.star-history.com/?repos=Spinach5%2Flanft&type=date&logscale=&legend=top-left)

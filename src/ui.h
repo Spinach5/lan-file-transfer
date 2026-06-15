@@ -4,14 +4,16 @@
 #include <SDL2/SDL.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include "config.h"
 
 /* ── SDL custom event codes ────────────────────────────────── */
-#define USEREVENT_SCAN_FOUND  (SDL_USEREVENT + 1)
-#define USEREVENT_SCAN_DONE   (SDL_USEREVENT + 2)
-#define USEREVENT_PROGRESS    (SDL_USEREVENT + 3)
-#define USEREVENT_XFER_DONE   (SDL_USEREVENT + 4)
-#define USEREVENT_ERROR       (SDL_USEREVENT + 5)
-#define USEREVENT_ZENITY_RESULT (SDL_USEREVENT + 6)
+#define USEREVENT_SCAN_FOUND        (SDL_USEREVENT + 1)
+#define USEREVENT_SCAN_DONE         (SDL_USEREVENT + 2)
+#define USEREVENT_PROGRESS          (SDL_USEREVENT + 3)
+#define USEREVENT_XFER_DONE         (SDL_USEREVENT + 4)
+#define USEREVENT_ERROR             (SDL_USEREVENT + 5)
+#define USEREVENT_ZENITY_RESULT     (SDL_USEREVENT + 6)
+#define USEREVENT_INCOMING_TRANSFER (SDL_USEREVENT + 7)
 
 /* ── Color scheme (dark theme) ─────────────────────────────── */
 #define COLOR_BG        ((SDL_Color){0x1e, 0x1e, 0x2e, 255})
@@ -29,6 +31,7 @@ enum {
     TAB_SEND,
     TAB_RECEIVE,
     TAB_HISTORY,
+    TAB_SETTINGS,
     TAB_COUNT
 };
 
@@ -40,6 +43,9 @@ struct app_state {
     /* Scan page */
     char scan_status[256];
     int  scan_port;
+    /* Local IPs (shown so user can tell others what to connect to) */
+    char local_ips[8][64];
+    int  local_ip_count;
     struct {
         char ip[64];
         char hostname[256];
@@ -87,14 +93,25 @@ struct app_state {
     uint64_t history_pending_start_ms;
     uint64_t history_pending_total;
 
+    /* Runtime config (settings page reads/writes this) */
+    struct lanft_config gui_cfg;
+
     /* Modal */
     bool modal_visible;
     char modal_message[512];
+
+    /* Incoming transfer prompt (auto_accept=false) */
+    bool incoming_active;
+    char incoming_ip[64];
+    char incoming_hostname[256];
+    char incoming_filename[256];
+    uint64_t incoming_size;
 
     /* General */
     char status_text[256];
     int window_w;
     int window_h;
+    int scroll_offset;     /* for pages that overflow */
 
     /* Text input focus */
     int active_input;  /* 0=none, 1=send path, 2=send ip, 3=recv path, 4=recv ip */

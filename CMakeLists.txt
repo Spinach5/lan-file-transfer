@@ -4,7 +4,7 @@ project(lanft C)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
-option(BUILD_GUI "Build with SDL2 GUI (requires SDL2, SDL2_ttf)" ON)
+option(BUILD_GUI "Build with SDL2 GUI (requires SDL2)" ON)
 
 # Dependencies required by both modes
 find_package(PkgConfig REQUIRED)
@@ -38,11 +38,23 @@ set(SOURCES
     src/network.c
     src/transfer.c
     src/cli.c
+    src/config.c
+    src/log.c
+    src/discovery.c
+    src/tomlc17/tomlc17.c
 )
 
 if(BUILD_GUI)
     message(STATUS "Building with SDL2 GUI")
     find_package(SDL2 REQUIRED)
+    # SDL2_ttf — optional, for system font support (Chinese, etc.)
+    pkg_check_modules(SDL2_TTF SDL2_ttf)
+    if(SDL2_TTF_FOUND)
+        message(STATUS "  SDL2_ttf found — system font enabled")
+        add_definitions(-DHAVE_SDL2_TTF)
+    else()
+        message(STATUS "  SDL2_ttf not found — falling back to built-in 8x16 bitmap font (ASCII only)")
+    endif()
     # Work around CMake/Win32 appending .lib to SDL2main's shell32 dependency
     if(WIN32 AND NOT MSVC)
         set_property(TARGET SDL2::SDL2main PROPERTY INTERFACE_LINK_LIBRARIES
@@ -56,6 +68,12 @@ else()
 endif()
 
 add_executable(lanft ${SOURCES})
+# Windows: force console subsystem so CLI output is visible.
+# Without this, SDL2 pulls in -mwindows which hides stdout/stderr.
+if(WIN32 AND BUILD_GUI)
+    set_target_properties(lanft PROPERTIES WIN32_EXECUTABLE FALSE)
+    target_link_options(lanft PRIVATE -mconsole)
+endif()
 
 target_include_directories(lanft PRIVATE
     ${LIBWEBSOCKETS_INCLUDE_DIRS}
@@ -65,6 +83,9 @@ target_include_directories(lanft PRIVATE
 
 if(BUILD_GUI)
     target_include_directories(lanft PRIVATE ${SDL2_INCLUDE_DIRS})
+    if(SDL2_TTF_FOUND)
+        target_include_directories(lanft PRIVATE ${SDL2_TTF_INCLUDE_DIRS})
+    endif()
 endif()
 
 target_link_libraries(lanft
@@ -75,8 +96,15 @@ target_link_libraries(lanft
 
 if(BUILD_GUI)
     target_link_libraries(lanft ${SDL2_LIBRARIES})
+    if(SDL2_TTF_FOUND)
+        target_link_libraries(lanft ${SDL2_TTF_LDFLAGS})
+    endif()
 endif()
 
 if(WIN32)
     target_link_libraries(lanft -lws2_32 -liphlpapi -lshell32 -lcomdlg32 -lole32)
+    # MSYS2: avoid CRT mismatch by preferring static libgcc
+    if(MINGW)
+        target_link_options(lanft PRIVATE -static-libgcc -static-libstdc++)
+    endif()
 endif()

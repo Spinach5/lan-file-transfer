@@ -1,0 +1,54 @@
+# nfpm packaging config for lanft
+# Build: nfpm package --packager deb  (or rpm)
+# https://nfpm.goreleaser.com/
+
+name: "lanft"
+version: "1.0.0"
+arch: "amd64"
+platform: "linux"
+section: "net"
+priority: "optional"
+
+description: >
+  A fast, reliable LAN file transfer tool with both GUI (SDL2) and CLI modes.
+  Supports TCP/UDP, directory compression, resume, device scanning, and
+  transfer history.
+
+maintainer: "Spinach <super_spinach@qq.com>"
+homepage: "https://github.com/Spinach5/lanft"
+license: "MIT"
+
+# ── Dependencies ──────────────────────────────────────────────
+depends:
+  # - libwebsockets-dev
+  # - libarchive-dev
+  # - libsdl2-dev
+
+recommends:
+  - git
+  - zenity
+
+# ── Package contents ──────────────────────────────────────────
+contents:
+  # Main binary
+  - src: "./build/lanft"
+    dst: "/usr/bin/lanft"
+    file_info:
+      mode: 0755
+
+  # System config (installed to /etc/lanft/config.toml)
+  # type: config means dpkg/rpm will not overwrite user changes on upgrade
+  - src: "./default.toml"
+    dst: "/etc/lanft/config.toml"
+    type: "config"
+
+  # Log directory (created with proper permissions)
+  - dst: "/var/log/lanft"
+    type: "dir"
+    file_info:
+      mode: 0755
+
+# ── Scripts ───────────────────────────────────────────────────
+# Create log dir with sticky permissions on install
+scripts:
+  postinstall: ./scripts/postinstall.sh

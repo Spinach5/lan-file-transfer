@@ -2,6 +2,7 @@
 #include "network.h"
 #include "protocol.h"
 #include "compat.h"
+#include "log.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -24,6 +25,47 @@
 static transfer_progress_fn g_prog_cb = NULL;
 static transfer_error_fn    g_err_cb  = NULL;
 static transfer_done_fn     g_done_cb = NULL;
+static transfer_accept_fn   g_accept_cb = NULL;
+static bool                 g_auto_accept = true;
+volatile int                g_accept_response = 0;
+volatile bool               g_accept_pending = false;
+
+void transfer_accept(void)
+{
+    g_accept_response = 1;
+    g_accept_pending = false;
+}
+
+void transfer_reject(void)
+{
+    g_accept_response = -1;
+    g_accept_pending = false;
+}
+
+/* ── Runtime config ─────────────────────────────────────────── */
+#define MAX_CHUNK_SIZE  (1024 * 1024)   /* 1 MiB ceiling */
+static uint8_t  g_chunk_buf[MAX_CHUNK_SIZE];
+static int      g_buffer_size       = 65536;
+static int      g_timeout_seconds   = 30;
+static char     g_overwrite_policy[16] = "rename";
+
+void transfer_set_buffer_size(int size)
+{
+    if (size > 0 && size <= MAX_CHUNK_SIZE)
+        g_buffer_size = size;
+}
+
+void transfer_set_timeout(int seconds)
+{
+    if (seconds >= 0)
+        g_timeout_seconds = seconds;
+}
+
+void transfer_set_overwrite_policy(const char *policy)
+{
+    if (policy && policy[0])
+        strncpy(g_overwrite_policy, policy, sizeof(g_overwrite_policy) - 1);
+}
 
 void transfer_set_callbacks(transfer_progress_fn prog,
                             transfer_error_fn err,
@@ -32,6 +74,25 @@ void transfer_set_callbacks(transfer_progress_fn prog,
     g_prog_cb = prog;
     g_err_cb  = err;
     g_done_cb = done;
+}
+
+void transfer_set_auto_accept(bool enabled)
+{
+    g_auto_accept = enabled;
+}
+
+void transfer_set_accept_callback(transfer_accept_fn cb)
+{
+    g_accept_cb = cb;
+}
+
+/* ── Last received filename (for persistent listener history) ── */
+
+static char g_last_recv_name[FT_MAX_FILENAME];
+
+const char *transfer_last_recv_name(void)
+{
+    return g_last_recv_name[0] ? g_last_recv_name : NULL;
 }
 
 /* ── Helpers ───────────────────────────────────────────────── */
@@ -61,7 +122,7 @@ static void push_error(const char *fmt, ...)
     strncpy(err->message, buf, sizeof(err->message) - 1);
     push_event(SDL_USEREVENT + 5, err);
 #else
-    fprintf(stderr, "Error: %s\n", buf);
+    log_write("Error: %s\n", buf);
 #endif
 }
 
@@ -139,8 +200,8 @@ static int sock_write_full(socket_t fd, const void *buf, size_t len)
         fd_set fds;
         FD_ZERO(&fds);
         FD_SET(fd, &fds);
-        /* Wait up to 5s for writability */
-        struct timeval tv = {5, 0};
+        /* Wait for writability (use config timeout) */
+        struct timeval tv = {g_timeout_seconds > 0 ? g_timeout_seconds : 5, 0};
         int ret = select(fd + 1, NULL, &fds, NULL, &tv);
         if (ret <= 0) return -1;
         ssize_t n = sock_write(fd, p + sent, len - sent);
@@ -273,8 +334,8 @@ static int tcp_send_file(struct net_context *nc, const char *filepath,
                           uint64_t resume_offset)
 {
     socket_t fd = net_get_fd(nc);
-    fprintf(stderr, "[SEND] tcp_send_file: fd=%d, file=%s\n", fd, filepath);
-    if (fd < 0) { fprintf(stderr, "[SEND] BAD FD!\n"); push_error("No socket"); return -2; }
+    log_write("[SEND] tcp_send_file: fd=%d, file=%s\n", fd, filepath);
+    if (fd < 0) { log_write("[SEND] BAD FD!\n"); push_error("No socket"); return -2; }
 
     /* Check if path is a directory — compress with libarchive */
     struct stat path_st;
@@ -285,7 +346,7 @@ static int tcp_send_file(struct net_context *nc, const char *filepath,
 
     if (stat(filepath, &path_st) == 0 && S_ISDIR(path_st.st_mode)) {
         is_dir = true;
-        fprintf(stderr, "[SEND] directory mode, compressing with libarchive...\n");
+        log_write("[SEND] directory mode, compressing with libarchive...\n");
         tmp_archive = compress_dir_to_tmp(filepath, &total);
         if (!tmp_archive || total == 0) {
             push_error("Failed to compress directory");
@@ -293,10 +354,10 @@ static int tcp_send_file(struct net_context *nc, const char *filepath,
             return -2;
         }
         actual_path = tmp_archive;
-        fprintf(stderr, "[SEND] compressed to %s (%lu bytes)\n", tmp_archive, (unsigned long)total);
+        log_write("[SEND] compressed to %s (%lu bytes)\n", tmp_archive, (unsigned long)total);
     } else {
         FILE *fp = fopen(filepath, "rb");
-        if (!fp) { fprintf(stderr, "[SEND] CANNOT OPEN!\n"); push_error("Cannot open: %s", filepath); return -2; }
+        if (!fp) { log_write("[SEND] CANNOT OPEN!\n"); push_error("Cannot open: %s", filepath); return -2; }
         fseek(fp, 0, SEEK_END);
         total = (uint64_t)ftell(fp);
         fclose(fp);
@@ -321,33 +382,34 @@ static int tcp_send_file(struct net_context *nc, const char *filepath,
     meta.name_len = (uint8_t)strlen(meta.filename);
     meta.total_size = total;
 
-    fprintf(stderr, "[SEND] sending meta (name=%s, size=%lu, dir=%d)...\n",
+    log_write("[SEND] sending meta (name=%s, size=%lu, dir=%d)...\n",
             meta.filename, (unsigned long)total, is_dir);
     if (sock_write_full(fd, &meta, sizeof(meta)) != 0) {
-        fprintf(stderr, "[SEND] FAILED to send meta!\n");
+        log_write("[SEND] FAILED to send meta!\n");
         push_error("Failed to send file metadata");
         free(tmp_archive);
         return -1;  /* likely scanner probe */
     }
-    fprintf(stderr, "[SEND] meta sent OK\n");
+    log_write("[SEND] meta sent OK\n");
 
     /* Read meta response */
-    fprintf(stderr, "[SEND] waiting for meta response...\n");
+    log_write("[SEND] waiting for meta response...\n");
     struct ft_meta_resp resp;
     memset(&resp, 0, sizeof(resp));
-    if (sock_read_full(fd, &resp, sizeof(resp), 2000) == 0 &&
+    int meta_timeout_ms = (g_timeout_seconds > 0) ? g_timeout_seconds * 1000 : 300000;
+    if (sock_read_full(fd, &resp, sizeof(resp), meta_timeout_ms) == 0 &&
         resp.magic == FT_MAGIC) {
         resume_offset = resp.resume_offset;
-        fprintf(stderr, "[SEND] got meta response, resume_offset=%lu\n", (unsigned long)resume_offset);
+        log_write("[SEND] got meta response, resume_offset=%lu\n", (unsigned long)resume_offset);
     } else {
         /* No valid response — likely a scanner probe, re-accept */
-        fprintf(stderr, "[SEND] no meta response, likely scanner\n");
+        log_write("[SEND] no meta response, likely scanner\n");
         free(tmp_archive);
         return -1;
     }
 
     if (resume_offset >= total && total > 0) {
-        fprintf(stderr, "[SEND] already complete on receiver, done\n");
+        log_write("[SEND] already complete on receiver, done\n");
         push_xfer_done();
         free(tmp_archive);
         return 0;
@@ -365,13 +427,12 @@ static int tcp_send_file(struct net_context *nc, const char *filepath,
         fseek(fp, (long)resume_offset, SEEK_SET);
         sent = resume_offset;
 
-        uint8_t buf[FT_TCP_CHUNK_SIZE];
         while (sent < total) {
-            size_t to_read = (total - sent) > FT_TCP_CHUNK_SIZE
-                             ? FT_TCP_CHUNK_SIZE : (size_t)(total - sent);
-            size_t n = fread(buf, 1, to_read, fp);
+            size_t to_read = (total - sent) > (uint64_t)g_buffer_size
+                             ? (size_t)g_buffer_size : (size_t)(total - sent);
+            size_t n = fread(g_chunk_buf, 1, to_read, fp);
             if (n == 0) break;
-            if (sock_write_full(fd, buf, n) != 0) {
+            if (sock_write_full(fd, g_chunk_buf, n) != 0) {
                 push_error("Send failed at %lu / %lu bytes",
                            (unsigned long)sent, (unsigned long)total);
                 fclose(fp);
@@ -380,13 +441,13 @@ static int tcp_send_file(struct net_context *nc, const char *filepath,
                 return -2;
             }
             sent += n;
-            fprintf(stderr, "[SEND] progress %lu/%lu\n", (unsigned long)sent, (unsigned long)total);
+            log_write("[SEND] progress %lu/%lu\n", (unsigned long)sent, (unsigned long)total);
             push_progress(sent, total);
         }
         fclose(fp);
     }
 
-    fprintf(stderr, "[SEND] transfer done, sent=%lu/%lu\n", (unsigned long)sent, (unsigned long)total);
+    log_write("[SEND] transfer done, sent=%lu/%lu\n", (unsigned long)sent, (unsigned long)total);
     if (tmp_archive) unlink(tmp_archive);
     free(tmp_archive);
     if (sent >= total) push_xfer_done();
@@ -398,18 +459,21 @@ static int tcp_send_file(struct net_context *nc, const char *filepath,
 static void tcp_recv_file(struct net_context *nc, const char *savepath)
 {
     socket_t fd = net_get_fd(nc);
-    fprintf(stderr, "[RECV] tcp_recv_file: fd=%d, save=%s\n", fd, savepath);
-    if (fd < 0) { fprintf(stderr, "[RECV] BAD FD!\n"); push_error("No socket"); return; }
+    log_write("[RECV] tcp_recv_file: fd=%d, save=%s\n", fd, savepath);
+    if (fd < 0) { log_write("[RECV] BAD FD!\n"); push_error("No socket"); return; }
 
-    /* Read meta */
-    fprintf(stderr, "[RECV] waiting for meta...\n");
+    /* Read meta — use a short initial timeout to filter out scanner probes.
+       Scanners connect and immediately close without sending data, which
+       causes select() to signal readability (EOF) within milliseconds. */
+    log_write("[RECV] waiting for meta...\n");
     struct ft_meta meta;
-    if (sock_read_full(fd, &meta, sizeof(meta), 30000) != 0) {
-        fprintf(stderr, "[RECV] FAILED to receive meta!\n");
-        push_error("Failed to receive file metadata (timeout)");
+    if (sock_read_full(fd, &meta, sizeof(meta), 1500) != 0) {
+        /* Short timeout (1.5s): likely a scanner probe, not a real sender.
+           Don't push an error — just quietly continue listening. */
+        log_write("[RECV] no meta in 1.5s, likely scanner probe — ignoring\n");
         return;
     }
-    fprintf(stderr, "[RECV] got meta: name=%s, size=%lu, flags=%d\n",
+    log_write("[RECV] got meta: name=%s, size=%lu, flags=%d\n",
             meta.filename, (unsigned long)meta.total_size, meta.flags);
 
     if (meta.magic != FT_MAGIC) {
@@ -417,85 +481,150 @@ static void tcp_recv_file(struct net_context *nc, const char *savepath)
         return;
     }
 
+    strncpy(g_last_recv_name, meta.filename, sizeof(g_last_recv_name) - 1);
+
     bool is_dir = (meta.flags & 0x01) != 0;
 
-    /* Determine output path */
+    /* Determine output path and calculate resume offset */
     char rootpath[1024];
     snprintf(rootpath, sizeof(rootpath), "%s/%s", savepath, meta.filename);
-
-    /* Calculate resume behavior */
     uint64_t local_size = file_size(rootpath);
     uint64_t resume_offset = 0;
-
     if (!is_dir && local_size > 0 && local_size < meta.total_size) {
         resume_offset = local_size;
     }
 
-    /* Send meta response */
-    struct ft_meta_resp resp;
-    memset(&resp, 0, sizeof(resp));
-    resp.magic = FT_MAGIC;
-    resp.resume_offset = resume_offset;
-    if (sock_write_full(fd, &resp, sizeof(resp)) != 0) {
-        push_error("Failed to send meta response");
-        return;
+    /* ── Auto-accept check (BEFORE meta response — sender has 5min timeout) */
+    if (!g_auto_accept && g_accept_cb) {
+        struct sockaddr_in peer;
+        socklen_t peer_len = sizeof(peer);
+        char sender_ip[64] = "unknown";
+        char sender_host[256] = "";
+        if (getpeername(fd, (struct sockaddr *)&peer, &peer_len) == 0) {
+            inet_ntop(AF_INET, &peer.sin_addr, sender_ip, sizeof(sender_ip));
+            struct sockaddr_in sa;
+            memset(&sa, 0, sizeof(sa));
+            sa.sin_family = AF_INET;
+            sa.sin_addr = peer.sin_addr;
+            getnameinfo((const struct sockaddr *)&sa, sizeof(sa),
+                        sender_host, sizeof(sender_host), NULL, 0, 0);
+        }
+        log_write("[RECV] asking user to accept transfer from %s (%s)...\n",
+                sender_ip, sender_host);
+        if (!g_accept_cb(sender_ip, sender_host, meta.filename, meta.total_size)) {
+            log_write("[RECV] transfer rejected by user\n");
+            push_error("Transfer rejected by user");
+            return;
+        }
+        log_write("[RECV] transfer accepted by user\n");
     }
 
-    fprintf(stderr, "[RECV] ready for data, total=%lu, is_dir=%d\n",
+    /* Send meta response now that user has accepted.
+       Sender waits up to 5 minutes for this. */
+    {
+        struct ft_meta_resp resp;
+        memset(&resp, 0, sizeof(resp));
+        resp.magic = FT_MAGIC;
+        resp.resume_offset = resume_offset;
+        if (sock_write_full(fd, &resp, sizeof(resp)) != 0) {
+            push_error("Failed to send meta response");
+            return;
+        }
+        log_write("[RECV] meta response sent, resume_offset=%lu\n",
+                (unsigned long)resume_offset);
+    }
+
+    log_write("[RECV] ready for data, total=%lu, is_dir=%d\n",
             (unsigned long)meta.total_size, is_dir);
 
     /* Receive file data (as single file) */
     uint64_t received = resume_offset;
-    uint8_t buf[FT_TCP_CHUNK_SIZE];
 
-    FILE *fp = fopen(rootpath, resume_offset > 0 ? "ab" : "wb");
+    /* ── Overwrite policy ────────────────────────────────── */
+    char final_path[1024];
+    strncpy(final_path, rootpath, sizeof(final_path) - 1);
+
+    if (resume_offset == 0) {
+        struct stat exist_st;
+        if (stat(rootpath, &exist_st) == 0) {
+            if (strcmp(g_overwrite_policy, "skip") == 0) {
+                log_write("[RECV] file exists, skipping: %s\n", rootpath);
+                push_error("File already exists (overwrite_policy=skip)");
+                return;
+            } else if (strcmp(g_overwrite_policy, "rename") == 0) {
+                /* Generate a new name: file (1).ext, file (2).ext, ... */
+                char base[900], ext[128];
+                const char *dot = strrchr(meta.filename, '.');
+                if (dot && dot != meta.filename) {
+                    size_t blen = dot - meta.filename;
+                    if (blen > sizeof(base) - 1) blen = sizeof(base) - 1;
+                    memcpy(base, meta.filename, blen); base[blen] = '\0';
+                    strncpy(ext, dot, sizeof(ext) - 1);
+                } else {
+                    strncpy(base, meta.filename, sizeof(base) - 1);
+                    ext[0] = '\0';
+                }
+                int n = 1;
+                while (n < 1000) {
+                    snprintf(final_path, sizeof(final_path), "%s/%s (%d)%s",
+                             savepath, base, n, ext);
+                    if (stat(final_path, &exist_st) != 0) break;
+                    n++;
+                }
+                log_write("[RECV] file exists, renamed to: %s\n", final_path);
+            }
+            /* "overwrite" → just use rootpath as-is (wb mode truncates) */
+        }
+    }
+
+    FILE *fp = fopen(final_path, resume_offset > 0 ? "ab" : "wb");
     if (!fp) {
-        push_error("Cannot create file: %s", rootpath);
+        push_error("Cannot create file: %s", final_path);
         return;
     }
     if (resume_offset > 0) fseek(fp, (long)resume_offset, SEEK_SET);
 
     while (received < meta.total_size) {
-        size_t to_read = (meta.total_size - received) > FT_TCP_CHUNK_SIZE
-                         ? FT_TCP_CHUNK_SIZE : (size_t)(meta.total_size - received);
+        size_t to_read = (meta.total_size - received) > (uint64_t)g_buffer_size
+                         ? (size_t)g_buffer_size : (size_t)(meta.total_size - received);
 
         fd_set fds;
         FD_ZERO(&fds);
         FD_SET(fd, &fds);
-        struct timeval tv = {30, 0};
+        struct timeval tv = {g_timeout_seconds > 0 ? g_timeout_seconds : 30, 0};
         if (select(fd + 1, &fds, NULL, NULL, &tv) <= 0) {
             push_error("Receive timeout");
             fclose(fp);
             return;
         }
 
-        ssize_t n = sock_read(fd, buf, to_read);
+        ssize_t n = sock_read(fd, g_chunk_buf, to_read);
         if (n <= 0) {
             push_error("Receive failed");
             fclose(fp);
             return;
         }
 
-        fwrite(buf, 1, n, fp);
+        fwrite(g_chunk_buf, 1, n, fp);
         received += n;
-        fprintf(stderr, "[RECV] progress %lu/%lu\n", (unsigned long)received, (unsigned long)meta.total_size);
+        log_write("[RECV] progress %lu/%lu\n", (unsigned long)received, (unsigned long)meta.total_size);
         push_progress(received, meta.total_size);
     }
     fclose(fp);
 
     /* If directory: extract the .tar.gz archive */
     if (is_dir && received >= meta.total_size) {
-        fprintf(stderr, "[RECV] extracting archive %s to %s...\n", rootpath, savepath);
-        if (extract_archive(rootpath, savepath) == 0) {
-            fprintf(stderr, "[RECV] extraction complete\n");
-            unlink(rootpath);  /* remove temp archive */
+        log_write("[RECV] extracting archive %s to %s...\n", final_path, savepath);
+        if (extract_archive(final_path, savepath) == 0) {
+            log_write("[RECV] extraction complete\n");
+            unlink(final_path);  /* remove temp archive */
         } else {
             push_error("Failed to extract archive");
             return;
         }
     }
 
-    fprintf(stderr, "[RECV] transfer done, received=%lu/%lu\n", (unsigned long)received, (unsigned long)meta.total_size);
+    log_write("[RECV] transfer done, received=%lu/%lu\n", (unsigned long)received, (unsigned long)meta.total_size);
     push_xfer_done();
 }
 
@@ -644,6 +773,8 @@ static void udp_recv_file(struct net_context *nc, const char *savepath)
         return;
     }
 
+    strncpy(g_last_recv_name, meta.filename, sizeof(g_last_recv_name) - 1);
+
     char fullpath[1024];
     snprintf(fullpath, sizeof(fullpath), "%s/%s", savepath, meta.filename);
 
@@ -733,12 +864,12 @@ static void udp_recv_file(struct net_context *nc, const char *savepath)
 
 void transfer_send(struct net_context *nc, const char *filepath, int protocol)
 {
-    fprintf(stderr, "[SEND] transfer_send start, proto=%d, file=%s\n", protocol, filepath);
+    log_write("[SEND] transfer_send start, proto=%d, file=%s\n", protocol, filepath);
     if (protocol == FT_PROTO_TCP) {
         /* Sender is client — already connected via main thread */
-        fprintf(stderr, "[SEND] connected, fd=%d, starting transfer...\n", net_get_fd(nc));
+        log_write("[SEND] connected, fd=%d, starting transfer...\n", net_get_fd(nc));
         tcp_send_file(nc, filepath, 0);
-        fprintf(stderr, "[SEND] transfer done\n");
+        log_write("[SEND] transfer done\n");
     } else {
         udp_send_file(nc, filepath);
     }
@@ -746,24 +877,24 @@ void transfer_send(struct net_context *nc, const char *filepath, int protocol)
 
 void transfer_recv(struct net_context *nc, const char *savepath, int protocol)
 {
-    fprintf(stderr, "[RECV] transfer_recv start, proto=%d, save=%s\n", protocol, savepath);
+    log_write("[RECV] transfer_recv start, proto=%d, save=%s\n", protocol, savepath);
     if (protocol == FT_PROTO_TCP) {
         /* Receiver is server — accept sender connection */
-        fprintf(stderr, "[RECV] waiting for sender (net_accept)...\n");
+        log_write("[RECV] waiting for sender (net_accept)...\n");
         int ar = net_accept(nc);
         if (ar == -2) {
-            fprintf(stderr, "[RECV] net_accept cancelled\n");
+            log_write("[RECV] net_accept cancelled\n");
             push_xfer_done();
             return;
         }
         if (ar != 0) {
-            fprintf(stderr, "[RECV] net_accept FAILED\n");
+            log_write("[RECV] net_accept FAILED\n");
             push_error("Failed to accept sender connection");
             return;
         }
-        fprintf(stderr, "[RECV] sender connected, fd=%d, starting receive...\n", net_get_fd(nc));
+        log_write("[RECV] sender connected, fd=%d, starting receive...\n", net_get_fd(nc));
         tcp_recv_file(nc, savepath);
-        fprintf(stderr, "[RECV] tcp_recv_file returned\n");
+        log_write("[RECV] tcp_recv_file returned\n");
     } else {
         udp_recv_file(nc, savepath);
     }

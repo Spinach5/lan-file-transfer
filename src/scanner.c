@@ -1,6 +1,7 @@
 #include "scanner.h"
 #include "protocol.h"
 #include "compat.h"
+#include "log.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -199,9 +200,63 @@ static void scanner_run(uint16_t port)
         return;
     }
 
-    /* Scan each subnet */
+    /* ── Phase 1: UDP broadcast probe (fast, finds idle instances too) */
     for (int s = 0; s < subnet_count; s++) {
-        fprintf(stderr, "[SCAN] scanning subnet %s.x (port %d)...\n", subnets[s], port);
+        socket_t udp_fd = socket(AF_INET, SOCK_DGRAM, 0);
+        if (udp_fd == INVALID_FD) continue;
+
+        int broadcast = 1;
+        setsockopt(udp_fd, SOL_SOCKET, SO_BROADCAST,
+                   (const char *)&broadcast, sizeof(broadcast));
+        struct timeval tv = {0, 500000};
+        setsockopt(udp_fd, SOL_SOCKET, SO_RCVTIMEO,
+                   (const char *)&tv, sizeof(tv));
+
+        char bcast_ip[64];
+        snprintf(bcast_ip, sizeof(bcast_ip), "%s.255", subnets[s]);
+        struct sockaddr_in baddr;
+        memset(&baddr, 0, sizeof(baddr));
+        baddr.sin_family = AF_INET;
+        baddr.sin_port = htons(port);
+        inet_pton(AF_INET, bcast_ip, &baddr.sin_addr);
+
+        uint32_t magic = FT_MAGIC;
+        sendto(udp_fd, (const char *)&magic, 4, 0,
+               (struct sockaddr *)&baddr, sizeof(baddr));
+
+        /* Collect responses (up to 2 seconds) */
+        for (int r = 0; r < 4; r++) {
+            uint8_t buf[260];
+            struct sockaddr_in src;
+            socklen_t srclen = sizeof(src);
+            ssize_t n = recvfrom(udp_fd, (char *)buf, sizeof(buf), 0,
+                                 (struct sockaddr *)&src, &srclen);
+            if (n < 4) continue;
+            uint32_t rmagic;
+            memcpy(&rmagic, buf, 4);
+            if (rmagic != FT_MAGIC) continue;
+
+            char ip[64];
+            inet_ntop(AF_INET, &src.sin_addr, ip, sizeof(ip));
+            struct event_scan_found *evt = calloc(1, sizeof(*evt));
+            strncpy(evt->ip, ip, sizeof(evt->ip) - 1);
+            if (n >= 260)
+                strncpy(evt->hostname, (char *)(buf + 4), sizeof(evt->hostname) - 1);
+            else
+                strncpy(evt->hostname, "", sizeof(evt->hostname) - 1);
+
+            SDL_Event event;
+            SDL_memset(&event, 0, sizeof(event));
+            event.type = SDL_USEREVENT + 1;
+            event.user.data1 = evt;
+            SDL_PushEvent(&event);
+        }
+        close_sock(udp_fd);
+    }
+
+    /* ── Phase 2: TCP connect scan (fallback for non-discovery instances) */
+    for (int s = 0; s < subnet_count; s++) {
+        log_write("[SCAN] scanning subnet %s.x (port %d)...\n", subnets[s], port);
         scan_subnet(subnets[s], port);
     }
 
@@ -230,4 +285,51 @@ void scanner_start(uint16_t port)
     pthread_t tid;
     pthread_create(&tid, NULL, scanner_thread_entry, (void *)(uintptr_t)port);
     pthread_detach(tid);
+}
+
+/* Collect all local non-loopback IPv4 addresses for display */
+int scanner_get_local_ips(char ips[][64], int max_count)
+{
+    int count = 0;
+#ifdef _WIN32
+    ULONG bufLen = 15000;
+    IP_ADAPTER_ADDRESSES *adapters = malloc(bufLen);
+    if (!adapters) return 0;
+    if (GetAdaptersAddresses(AF_INET, GAA_FLAG_INCLUDE_PREFIX, NULL, adapters, &bufLen) != 0) {
+        free(adapters); return 0;
+    }
+    for (IP_ADAPTER_ADDRESSES *a = adapters; a && count < max_count; a = a->Next) {
+        if (a->OperStatus != IfOperStatusUp) continue;
+        for (IP_ADAPTER_UNICAST_ADDRESS *u = a->FirstUnicastAddress; u; u = u->Next) {
+            if (u->Address.lpSockaddr->sa_family != AF_INET) continue;
+            struct sockaddr_in *sin = (struct sockaddr_in *)u->Address.lpSockaddr;
+            uint32_t ip = ntohl(sin->sin_addr.s_addr);
+            if ((ip & 0xFF000000) == 0x7F000000) continue; /* skip 127.x.x.x */
+            inet_ntop(AF_INET, &sin->sin_addr, ips[count], 63);
+            count++;
+            if (count >= max_count) break;
+        }
+    }
+    free(adapters);
+#else
+    struct ifaddrs *ifaddr, *ifa;
+    if (getifaddrs(&ifaddr) == -1) return 0;
+    for (ifa = ifaddr; ifa && count < max_count; ifa = ifa->ifa_next) {
+        if (!ifa->ifa_addr || ifa->ifa_addr->sa_family != AF_INET) continue;
+        if (strcmp(ifa->ifa_name, "lo") == 0) continue;
+        struct sockaddr_in *addr = (struct sockaddr_in *)ifa->ifa_addr;
+        uint32_t ip = ntohl(addr->sin_addr.s_addr);
+        if ((ip & 0xFF000000) == 0x7F000000) continue;
+        char ip_str[64];
+        inet_ntop(AF_INET, &addr->sin_addr, ip_str, sizeof(ip_str));
+        /* Skip duplicates and 0.0.0.0 */
+        if (strcmp(ip_str, "0.0.0.0") == 0) continue;
+        bool dup = false;
+        for (int i = 0; i < count; i++)
+            if (strcmp(ips[i], ip_str) == 0) { dup = true; break; }
+        if (!dup) { strncpy(ips[count], ip_str, 63); count++; }
+    }
+    freeifaddrs(ifaddr);
+#endif
+    return count;
 }

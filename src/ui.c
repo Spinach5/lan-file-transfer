@@ -4,12 +4,101 @@
 #include "transfer.h"
 #include "network.h"
 #include "compat.h"
+#include "log.h"
 
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
 #include <pthread.h>
 #include <SDL2/SDL.h>
+#ifdef HAVE_SDL2_TTF
+#include <SDL2/SDL_ttf.h>
+#endif
+
+/* ── Font system ──────────────────────────────────────────────── */
+
+#define FONT_W  8
+#define FONT_H  16
+#define FONT_GLYPHS 95
+#define FONT_START   32
+
+/* TTF mode globals */
+#ifdef HAVE_SDL2_TTF
+static TTF_Font *ttf_font = NULL;
+static int       ttf_ptsize = 16;
+
+/* Simple text cache — avoid re-rendering same string every frame */
+#define TEX_CACHE_SIZE 64
+static struct { char text[256]; SDL_Color color; SDL_Texture *tex; int w, h; } tex_cache[TEX_CACHE_SIZE];
+static int tex_cache_next = 0;
+
+static SDL_Texture *find_cached_tex(SDL_Renderer *r, const char *text, SDL_Color c, int *w, int *h)
+{
+    for (int i = 0; i < TEX_CACHE_SIZE; i++) {
+        if (tex_cache[i].tex && strcmp(tex_cache[i].text, text) == 0 &&
+            tex_cache[i].color.r == c.r && tex_cache[i].color.g == c.g &&
+            tex_cache[i].color.b == c.b && tex_cache[i].color.a == c.a) {
+            *w = tex_cache[i].w; *h = tex_cache[i].h;
+            return tex_cache[i].tex;
+        }
+    }
+    return NULL;
+}
+
+static void cache_tex(const char *text, SDL_Color c, SDL_Texture *tex, int w, int h)
+{
+    int slot = tex_cache_next++ % TEX_CACHE_SIZE;
+    if (tex_cache[slot].tex) SDL_DestroyTexture(tex_cache[slot].tex);
+    strncpy(tex_cache[slot].text, text, 255);
+    tex_cache[slot].text[255] = '\0';
+    tex_cache[slot].color = c;
+    tex_cache[slot].tex = tex;
+    tex_cache[slot].w  = w;
+    tex_cache[slot].h  = h;
+}
+
+static void clear_tex_cache(void)
+{
+    for (int i = 0; i < TEX_CACHE_SIZE; i++) {
+        if (tex_cache[i].tex) { SDL_DestroyTexture(tex_cache[i].tex); tex_cache[i].tex = NULL; }
+    }
+    tex_cache_next = 0;
+}
+#endif
+
+/* Try to find a system font that supports CJK.
+   Returns path that must be freed by caller, or NULL. */
+static char *find_system_font(void)
+{
+    static const char *candidates[] = {
+        /* Linux */
+        "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+        "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+        "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/TTF/DejaVuSans.ttf",
+        /* Windows */
+        "C:/Windows/Fonts/msyh.ttc",
+        "C:/Windows/Fonts/msyhbd.ttc",
+        "C:/Windows/Fonts/simsun.ttc",
+        "C:/Windows/Fonts/arial.ttf",
+        /* macOS */
+        "/System/Library/Fonts/PingFang.ttc",
+        "/System/Library/Fonts/STHeiti Light.ttc",
+        "/Library/Fonts/Arial Unicode.ttf",
+        NULL
+    };
+    for (int i = 0; candidates[i]; i++) {
+        FILE *fp = fopen(candidates[i], "rb");
+        if (fp) { fclose(fp); return strdup(candidates[i]); }
+    }
+    return NULL;
+}
+
+/* Bitmap font glyph textures */
+static SDL_Texture *glyph_tex[FONT_GLYPHS];
 
 /* ── File dialog ─────────────────────────────────────────────── */
 
@@ -221,21 +310,30 @@ static const unsigned char font_8x16[95][16] = {
     /* ~ */    {0,0,98,244,140,0,0,0,0,0,0,0,0,0,0,0},
 };
 
-#define FONT_W  8
-#define FONT_H  16
-#define FONT_GLYPHS 95
-#define FONT_START   32
-
-/* ── Global font state ─────────────────────────────────────── */
-static SDL_Texture *glyph_tex[FONT_GLYPHS];
-
 /* ── Init / cleanup ────────────────────────────────────────── */
 
 int ui_init(void)
 {
-    /* Font initialization: create glyph textures */
-    /* We'll create these lazily since we need a renderer */
     memset(glyph_tex, 0, sizeof(glyph_tex));
+#ifdef HAVE_SDL2_TTF
+    if (TTF_Init() == 0) {
+        char *font_path = find_system_font();
+        if (font_path) {
+            ttf_font = TTF_OpenFont(font_path, ttf_ptsize);
+            if (ttf_font) {
+                log_write("[ui] loaded system font: %s (%dpt)\n", font_path, ttf_ptsize);
+            } else {
+                log_write("[ui] TTF_OpenFont failed: %s\n", TTF_GetError());
+            }
+            free(font_path);
+        } else {
+            log_write("[ui] no system CJK font found, using built-in bitmap font\n");
+        }
+        if (!ttf_font) TTF_Quit();  /* no usable font, shutdown TTF */
+    } else {
+        log_write("[ui] TTF_Init failed: %s\n", TTF_GetError());
+    }
+#endif
     return 0;
 }
 
@@ -245,6 +343,11 @@ void ui_cleanup(void)
         if (glyph_tex[i]) SDL_DestroyTexture(glyph_tex[i]);
         glyph_tex[i] = NULL;
     }
+#ifdef HAVE_SDL2_TTF
+    clear_tex_cache();
+    if (ttf_font) { TTF_CloseFont(ttf_font); ttf_font = NULL; }
+    TTF_Quit();
+#endif
 }
 
 /* ── Drawing primitives ────────────────────────────────────── */
@@ -292,6 +395,26 @@ void ui_draw_text(SDL_Renderer *r, const char *text, int x, int y, SDL_Color c)
 {
     if (!text || !text[0]) return;
 
+#ifdef HAVE_SDL2_TTF
+    if (ttf_font) {
+        int tw, th;
+        SDL_Texture *tex = find_cached_tex(r, text, c, &tw, &th);
+        if (!tex) {
+            SDL_Surface *surf = TTF_RenderUTF8_Blended(ttf_font, text, c);
+            if (surf) {
+                tex = SDL_CreateTextureFromSurface(r, surf);
+                if (tex) { cache_tex(text, c, tex, surf->w, surf->h); tw = surf->w; th = surf->h; }
+                SDL_FreeSurface(surf);
+            }
+        }
+        if (tex) {
+            SDL_Rect dst = {x, y, tw, th};
+            SDL_RenderCopy(r, tex, NULL, &dst);
+        }
+        return;
+    }
+#endif
+    /* Fallback: built-in 8x16 bitmap */
     int cx = x;
     for (const char *p = text; *p; p++) {
         int idx = (unsigned char)*p - FONT_START;
@@ -312,6 +435,16 @@ void ui_draw_text(SDL_Renderer *r, const char *text, int x, int y, SDL_Color c)
 
 void ui_text_size(const char *text, int *w, int *h)
 {
+#ifdef HAVE_SDL2_TTF
+    if (ttf_font && text && text[0]) {
+        int tw, th;
+        if (TTF_SizeUTF8(ttf_font, text, &tw, &th) == 0) {
+            if (w) *w = tw;
+            if (h) *h = th;
+            return;
+        }
+    }
+#endif
     if (w) *w = (text ? (int)strlen(text) * (FONT_W + 1) : 0);
     if (h) *h = FONT_H;
 }
@@ -420,7 +553,7 @@ static bool ui_button(SDL_Renderer *r, const char *label, int x, int y, int w, i
 /* ── Tab bar ───────────────────────────────────────────────── */
 
 static const char *tab_labels[] = {
-    "Scan Devices", "Send File", "Receive File", "History"
+    "Scan Devices", "Send File", "Receive File", "History", "Settings"
 };
 
 static void render_tab_bar(SDL_Renderer *r, struct app_state *st)
@@ -443,18 +576,36 @@ static void render_tab_bar(SDL_Renderer *r, struct app_state *st)
 
 static void render_scan_page(SDL_Renderer *r, struct app_state *st)
 {
-    int list_y = 88, list_h = st->window_h - 128;
+    int y = 46, list_y, list_h;
 
-    ui_button(r, "Scan", 20, 46, 100, 32, 0, 0, false);
-    ui_draw_text(r, "Port:", 128, 52, COLOR_TEXT);
+    /* ── Row 1: Scan button + port ───────────────────────── */
+    ui_button(r, "Scan", 20, y, 100, 32, 0, 0, false);
+    ui_draw_text(r, "Port:", 128, y + 4, COLOR_TEXT);
     {
         char pbuf[16];
         snprintf(pbuf, sizeof(pbuf), "%d", st->scan_port);
-        ui_text_field(r, 175, 46, 65, 28, pbuf,
+        ui_text_field(r, 175, y, 65, 28, pbuf,
                       st->active_input == 7, st->active_input == 7 ? st->input_cursor : 0, "9876", false);
     }
-    ui_draw_text(r, st->scan_status, 260, 52, COLOR_DIM);
+    ui_draw_text(r, st->scan_status, 260, y + 4, COLOR_DIM);
+    y += 40;
 
+    /* ── Local IPs ───────────────────────────────────────── */
+    if (st->local_ip_count > 0) {
+        ui_draw_text(r, "Your IPs:", 20, y + 4, COLOR_ACCENT);
+        char ip_list[512] = "";
+        for (int i = 0; i < st->local_ip_count; i++) {
+            if (i > 0) strcat(ip_list, "  ");
+            strcat(ip_list, st->local_ips[i]);
+        }
+        ui_draw_text(r, ip_list, 100, y + 4, COLOR_TEXT);
+        y += 28;
+    }
+    y += 4;
+
+    /* ── Device list ──────────────────────────────────────── */
+    list_y = y;
+    list_h = st->window_h - list_y - 40;
     ui_draw_rect(r, 20, list_y, st->window_w - 40, list_h, COLOR_SURFACE);
     ui_draw_text(r, "IP Address", 30, list_y + 5, COLOR_DIM);
     ui_draw_text(r, "Hostname", 220, list_y + 5, COLOR_DIM);
@@ -769,6 +920,216 @@ static void render_history_page(SDL_Renderer *r, struct app_state *st)
     }
 }
 
+/* ── Settings page ──────────────────────────────────────────── */
+
+/* Helper: draw toggle pair [ON] [OFF] for a bool field */
+static void render_toggle(SDL_Renderer *r, int x, int y, const char *label,
+                          bool value, SDL_Color fg, SDL_Color bg)
+{
+    ui_draw_text(r, label, x, y + 4, fg);
+    int lw, lh; ui_text_size(label, &lw, &lh);
+    x += lw + 10;
+    {
+        SDL_Color on_bg  = value ? COLOR_ACCENT : bg;
+        SDL_Color on_txt = value ? COLOR_BG : COLOR_DIM;
+        ui_draw_rect(r, x, y, 40, 28, on_bg);
+        int tw, th; ui_text_size("ON", &tw, &th);
+        ui_draw_text(r, "ON", x + (40 - tw)/2, y + (28 - th)/2, on_txt);
+    }
+    x += 44;
+    {
+        SDL_Color off_bg  = !value ? COLOR_ACCENT : bg;
+        SDL_Color off_txt = !value ? COLOR_BG : COLOR_DIM;
+        ui_draw_rect(r, x, y, 40, 28, off_bg);
+        int tw, th; ui_text_size("OFF", &tw, &th);
+        ui_draw_text(r, "OFF", x + (40 - tw)/2, y + (28 - th)/2, off_txt);
+    }
+}
+
+/* Helper: draw a small text field for numeric input */
+static void render_num_field(SDL_Renderer *r, int x, int y, int w,
+                             int value, int active_input, int cursor,
+                             const char *placeholder, bool disabled)
+{
+    char buf[32];
+    snprintf(buf, sizeof(buf), "%d", value);
+    ui_text_field(r, x, y, w, 28, buf,
+                  false, /* numeric fields always show the value */
+                  0, "0", disabled);
+}
+
+static void render_settings_page(SDL_Renderer *r, struct app_state *st)
+{
+    int x0 = 20, y = 50 + st->scroll_offset, W = st->window_w;
+    struct lanft_config *cfg = &st->gui_cfg;
+    SDL_Color c_text = COLOR_TEXT;
+    SDL_Color c_surf = COLOR_SURFACE;
+
+    /* ── Core ────────────────────────────────────────────── */
+    ui_draw_text(r, "Core", x0, y, COLOR_ACCENT); y += 24;
+    {
+        char pbuf[16]; snprintf(pbuf, sizeof(pbuf), "%d", cfg->port);
+        ui_draw_text(r, "Port:", x0, y + 4, c_text);
+        ui_text_field(r, x0 + 50, y, 70, 28, pbuf,
+                      st->active_input == 10, st->active_input == 10 ? st->input_cursor : 0,
+                      "9876", false);
+        ui_draw_text(r, "Protocol:", x0 + 135, y + 4, c_text);
+        /* TCP/UDP toggle */
+        {
+            SDL_Color tcp_bg = (cfg->protocol == FT_PROTO_TCP) ? COLOR_ACCENT : c_surf;
+            SDL_Color tcp_tx = (cfg->protocol == FT_PROTO_TCP) ? COLOR_BG : c_text;
+            ui_draw_rect(r, x0 + 220, y, 50, 28, tcp_bg);
+            int tw, th; ui_text_size("TCP", &tw, &th);
+            ui_draw_text(r, "TCP", x0 + 220 + (50 - tw)/2, y + (28 - th)/2, tcp_tx);
+        }
+        {
+            SDL_Color udp_bg = (cfg->protocol == FT_PROTO_UDP) ? COLOR_ACCENT : c_surf;
+            SDL_Color udp_tx = (cfg->protocol == FT_PROTO_UDP) ? COLOR_BG : c_text;
+            ui_draw_rect(r, x0 + 275, y, 50, 28, udp_bg);
+            int tw, th; ui_text_size("UDP", &tw, &th);
+            ui_draw_text(r, "UDP", x0 + 275 + (50 - tw)/2, y + (28 - th)/2, udp_tx);
+        }
+        y += 34;
+    }
+    {
+        ui_draw_text(r, "Address:", x0, y + 4, c_text);
+        ui_text_field(r, x0 + 80, y, 160, 28, cfg->address,
+                      st->active_input == 11, st->active_input == 11 ? st->input_cursor : 0,
+                      "0.0.0.0", false);
+        ui_draw_text(r, "Mode:", x0 + 250, y + 4, c_text);
+        {
+            SDL_Color s_bg = (cfg->mode == 0) ? COLOR_ACCENT : c_surf;
+            SDL_Color s_tx = (cfg->mode == 0) ? COLOR_BG : c_text;
+            ui_draw_rect(r, x0 + 305, y, 55, 28, s_bg);
+            int tw, th; ui_text_size("Send", &tw, &th);
+            ui_draw_text(r, "Send", x0 + 305 + (55 - tw)/2, y + (28 - th)/2, s_tx);
+        }
+        {
+            SDL_Color r_bg = (cfg->mode == 1) ? COLOR_ACCENT : c_surf;
+            SDL_Color r_tx = (cfg->mode == 1) ? COLOR_BG : c_text;
+            ui_draw_rect(r, x0 + 365, y, 75, 28, r_bg);
+            int tw, th; ui_text_size("Receive", &tw, &th);
+            ui_draw_text(r, "Receive", x0 + 365 + (75 - tw)/2, y + (28 - th)/2, r_tx);
+        }
+        y += 34;
+    }
+    {
+        ui_draw_text(r, "Save Dir:", x0, y + 4, c_text);
+        ui_text_field(r, x0 + 80, y, W - x0 - 100 - 170, 28, cfg->save_dir,
+                      st->active_input == 12, st->active_input == 12 ? st->input_cursor : 0,
+                      "~/Downloads", false);
+        /* Browse button */
+        SDL_Color bb = COLOR_SURFACE;
+        ui_draw_rect(r, W - 170, y, 80, 28, bb);
+        int tw, th; ui_text_size("Browse", &tw, &th);
+        ui_draw_text(r, "Browse", W - 170 + (80 - tw)/2, y + (28 - th)/2, c_text);
+        y += 34;
+    }
+
+    /* ── Transfer ─────────────────────────────────────────── */
+    y += 4;
+    ui_draw_text(r, "Transfer", x0, y, COLOR_ACCENT); y += 24;
+    {
+        char buf[32];
+        ui_draw_text(r, "Buffer:", x0, y + 4, c_text);
+        snprintf(buf, sizeof(buf), "%d", cfg->buffer_size);
+        ui_text_field(r, x0 + 60, y, 80, 28, buf,
+                      st->active_input == 13, st->active_input == 13 ? st->input_cursor : 0,
+                      "65536", false);
+        ui_draw_text(r, "Timeout:", x0 + 155, y + 4, c_text);
+        snprintf(buf, sizeof(buf), "%d", cfg->timeout_seconds);
+        ui_text_field(r, x0 + 230, y, 60, 28, buf,
+                      st->active_input == 14, st->active_input == 14 ? st->input_cursor : 0,
+                      "30", false);
+        ui_draw_text(r, "s", x0 + 295, y + 4, c_text);
+        y += 34;
+    }
+    {
+        char buf[32];
+        ui_draw_text(r, "Max Conn:", x0, y + 4, c_text);
+        snprintf(buf, sizeof(buf), "%d", cfg->max_connections);
+        ui_text_field(r, x0 + 85, y, 55, 28, buf,
+                      st->active_input == 15, st->active_input == 15 ? st->input_cursor : 0,
+                      "5", false);
+        ui_draw_text(r, "Bandwidth:", x0 + 155, y + 4, c_text);
+        snprintf(buf, sizeof(buf), "%d", cfg->send_bandwidth_limit);
+        ui_text_field(r, x0 + 245, y, 80, 28, buf,
+                      st->active_input == 16, st->active_input == 16 ? st->input_cursor : 0,
+                      "0", false);
+        ui_draw_text(r, "B/s", x0 + 330, y + 4, c_text);
+        y += 34;
+    }
+    /* Overwrite policy */
+    {
+        ui_draw_text(r, "Overwrite:", x0, y + 4, c_text);
+        const char *policies[] = {"rename", "overwrite", "skip"};
+        int px = x0 + 100;
+        for (int i = 0; i < 3; i++) {
+            bool sel = (strcmp(cfg->overwrite_policy, policies[i]) == 0);
+            SDL_Color bg = sel ? COLOR_ACCENT : c_surf;
+            SDL_Color tx = sel ? COLOR_BG : c_text;
+            int bw = (i == 0) ? 65 : (i == 1 ? 83 : 42);
+            ui_draw_rect(r, px, y, bw, 28, bg);
+            int tw, th; ui_text_size(policies[i], &tw, &th);
+            ui_draw_text(r, policies[i], px + (bw - tw)/2, y + (28 - th)/2, tx);
+            px += bw + 8;
+        }
+        y += 34;
+    }
+    /* Toggles */
+    render_toggle(r, x0, y, "Auto Accept:", cfg->auto_accept, c_text, c_surf); y += 34;
+    render_toggle(r, x0, y, "Show Progress:", cfg->show_progress, c_text, c_surf); y += 34;
+
+    /* ── Discovery ────────────────────────────────────────── */
+    y += 4;
+    ui_draw_text(r, "Discovery", x0, y, COLOR_ACCENT); y += 24;
+    render_toggle(r, x0, y, "Discovery:", cfg->discovery_enabled, c_text, c_surf); y += 34;
+    {
+        char buf[32];
+        ui_draw_text(r, "Interval:", x0, y + 4, c_text);
+        snprintf(buf, sizeof(buf), "%d", cfg->discovery_interval);
+        ui_text_field(r, x0 + 75, y, 50, 28, buf,
+                      st->active_input == 17, st->active_input == 17 ? st->input_cursor : 0,
+                      "5", false);
+        ui_draw_text(r, "s", x0 + 128, y + 4, c_text);
+        ui_draw_text(r, "TTL:", x0 + 155, y + 4, c_text);
+        snprintf(buf, sizeof(buf), "%d", cfg->discovery_ttl);
+        ui_text_field(r, x0 + 195, y, 50, 28, buf,
+                      st->active_input == 18, st->active_input == 18 ? st->input_cursor : 0,
+                      "1", false);
+        y += 34;
+    }
+
+    /* ── Logging ──────────────────────────────────────────── */
+    y += 4;
+    ui_draw_text(r, "Logging", x0, y, COLOR_ACCENT); y += 24;
+    {
+        ui_draw_text(r, "Level:", x0, y + 4, c_text);
+        const char *levels[] = {"debug", "info", "warn", "error"};
+        int lx = x0 + 60;
+        for (int i = 0; i < 4; i++) {
+            bool sel = (strcmp(cfg->log_level, levels[i]) == 0);
+            SDL_Color bg = sel ? COLOR_ACCENT : c_surf;
+            SDL_Color tx = sel ? COLOR_BG : c_text;
+            int bw = (i == 0) ? 55 : (i == 1 ? 40 : (i == 2 ? 45 : 48));
+            ui_draw_rect(r, lx, y, bw, 28, bg);
+            int tw, th; ui_text_size(levels[i], &tw, &th);
+            ui_draw_text(r, levels[i], lx + (bw - tw)/2, y + (28 - th)/2, tx);
+            lx += bw + 6;
+        }
+        y += 34;
+    }
+
+    /* ── Save button ──────────────────────────────────────── */
+    y += 8;
+    {
+        SDL_Color sb = COLOR_ACCENT;
+        ui_draw_rect(r, x0, y, 140, 32, sb);
+        int tw, th; ui_text_size("Save Config", &tw, &th);
+        ui_draw_text(r, "Save Config", x0 + (140 - tw)/2, y + (32 - th)/2, COLOR_BG);
+    }
+}
+
 /* ── Main render ───────────────────────────────────────────── */
 
 void ui_render(SDL_Renderer *renderer, struct app_state *state)
@@ -776,14 +1137,21 @@ void ui_render(SDL_Renderer *renderer, struct app_state *state)
     ui_draw_rect(renderer, 0, 0, state->window_w, state->window_h, COLOR_BG);
     render_tab_bar(renderer, state);
 
-    switch (state->current_tab) {
-    case TAB_SCAN:    render_scan_page(renderer, state); break;
-    case TAB_SEND:    render_send_page(renderer, state); break;
-    case TAB_RECEIVE: render_receive_page(renderer, state); break;
-    case TAB_HISTORY: render_history_page(renderer, state); break;
+    /* Clip page content to stay below tab bar and above status bar */
+    {
+        SDL_Rect clip = {0, 36, state->window_w, state->window_h - 64};
+        SDL_RenderSetClipRect(renderer, &clip);
     }
+    switch (state->current_tab) {
+    case TAB_SCAN:     render_scan_page(renderer, state); break;
+    case TAB_SEND:     render_send_page(renderer, state); break;
+    case TAB_RECEIVE:  render_receive_page(renderer, state); break;
+    case TAB_HISTORY:  render_history_page(renderer, state); break;
+    case TAB_SETTINGS: render_settings_page(renderer, state); break;
+    }
+    SDL_RenderSetClipRect(renderer, NULL);
 
-    /* Modal overlay */
+    /* Modal overlay — error messages */
     if (state->modal_visible) {
         ui_draw_rect(renderer, 0, 0, state->window_w, state->window_h,
                      (SDL_Color){0, 0, 0, 180});
@@ -791,6 +1159,30 @@ void ui_render(SDL_Renderer *renderer, struct app_state *state)
         ui_draw_rect(renderer, mx, my, 400, 120, COLOR_SURFACE);
         ui_draw_text(renderer, state->modal_message, mx + 20, my + 20, COLOR_TEXT);
         ui_button(renderer, "OK", mx + 160, my + 70, 80, 30, 0, 0, false);
+    }
+
+    /* Modal overlay — incoming transfer prompt */
+    if (state->incoming_active) {
+        ui_draw_rect(renderer, 0, 0, state->window_w, state->window_h,
+                     (SDL_Color){0, 0, 0, 180});
+        int mx = state->window_w / 2 - 200, my = state->window_h / 2 - 80;
+        ui_draw_rect(renderer, mx, my, 400, 160, COLOR_SURFACE);
+        ui_draw_text(renderer, "Incoming Transfer", mx + 20, my + 16, COLOR_ACCENT);
+        char buf[512];
+        snprintf(buf, sizeof(buf), "From: %s (%s)",
+                 state->incoming_ip, state->incoming_hostname);
+        ui_draw_text(renderer, buf, mx + 20, my + 44, COLOR_TEXT);
+        snprintf(buf, sizeof(buf), "File: %s", state->incoming_filename);
+        ui_draw_text(renderer, buf, mx + 20, my + 66, COLOR_TEXT);
+        /* Format size */
+        const char *units[] = {"B","KB","MB","GB"};
+        double s = (double)state->incoming_size;
+        int u = 0;
+        while (s >= 1024 && u < 3) { s /= 1024; u++; }
+        snprintf(buf, sizeof(buf), "Size: %.1f %s", s, units[u]);
+        ui_draw_text(renderer, buf, mx + 20, my + 88, COLOR_TEXT);
+        ui_button(renderer, "Accept", mx + 60, my + 118, 100, 30, 0, 0, false);
+        ui_button(renderer, "Reject", mx + 240, my + 118, 100, 30, 0, 0, false);
     }
 
     /* Status bar */
@@ -820,7 +1212,7 @@ bool ui_handle_event(SDL_Event *e, struct app_state *st)
         return true;
     }
 
-    /* Modal overlay */
+    /* Modal overlay — error */
     if (st->modal_visible) {
         if (e->type == SDL_MOUSEBUTTONDOWN) {
             int bx = st->window_w / 2 - 200 + 160;
@@ -830,6 +1222,27 @@ bool ui_handle_event(SDL_Event *e, struct app_state *st)
             }
         }
         return true;
+    }
+
+    /* Modal overlay — incoming transfer prompt */
+    if (st->incoming_active) {
+        if (e->type == SDL_MOUSEBUTTONDOWN) {
+            int modal_mx = st->window_w / 2 - 200;
+            int modal_my = st->window_h / 2 - 80;
+            /* Accept button */
+            if (ui_in_rect(mx, my, modal_mx + 60, modal_my + 118, 100, 30)) {
+                st->incoming_active = false;
+                transfer_accept();
+                return true;
+            }
+            /* Reject button */
+            if (ui_in_rect(mx, my, modal_mx + 240, modal_my + 118, 100, 30)) {
+                st->incoming_active = false;
+                transfer_reject();
+                return true;
+            }
+        }
+        return true;  /* Block all other clicks while prompt is active */
     }
 
     /* Per-tab clicks */
@@ -849,9 +1262,10 @@ bool ui_handle_event(SDL_Event *e, struct app_state *st)
                 if (ui_text_field_click(st, mx, my, 175, 46, 65, 28, 7, spbuf, false))
                     return true;
             }
-            /* Device list selection */
+            /* Device list selection (list_y matches render_scan_page layout) */
             {
-                int list_y = 88;
+                int list_y = 90;
+                if (st->local_ip_count > 0) list_y += 28;
                 for (int i = 0; i < st->device_count; i++) {
                     int ey = list_y + 28 + i * 30;
                     if (ui_in_rect(mx, my, 20, ey, st->window_w - 40, 28)) {
@@ -957,59 +1371,176 @@ bool ui_handle_event(SDL_Event *e, struct app_state *st)
                 }
             }
             break;
+
+        case TAB_SETTINGS: {
+            my -= st->scroll_offset;
+            struct lanft_config *cfg = &st->gui_cfg;
+            /* ── Core section ──────────────────────────── */
+            /* Protocol: TCP (x0+220=240, y=74) */
+            if (ui_in_rect(mx, my, 240, 74, 50, 28)) { cfg->protocol = FT_PROTO_TCP; return true; }
+            /* Protocol: UDP (x0+275=295, y=74) */
+            if (ui_in_rect(mx, my, 295, 74, 50, 28)) { cfg->protocol = FT_PROTO_UDP; return true; }
+            /* Port text field (x0+50=70, y=74) */
+            { char buf[32]; snprintf(buf, sizeof(buf), "%d", cfg->port);
+              if (ui_text_field_click(st, mx, my, 70, 74, 70, 28, 10, buf, false)) return true; }
+            /* Mode: Send (x0+305=325, y=108) */
+            if (ui_in_rect(mx, my, 325, 108, 55, 28)) { cfg->mode = 0; return true; }
+            /* Mode: Receive (x0+365=385, y=108) */
+            if (ui_in_rect(mx, my, 385, 108, 75, 28)) { cfg->mode = 1; return true; }
+            /* Address text field (x0+80=100, y=108) */
+            if (ui_text_field_click(st, mx, my, 100, 108, 160, 28, 11, cfg->address, false)) return true;
+            /* Save Dir text field (x0+80=100, y=142) */
+            if (ui_text_field_click(st, mx, my, 100, 142, st->window_w - 290, 28, 12, cfg->save_dir, false)) return true;
+            /* Browse button for save_dir (W-170, y=142) */
+            if (ui_in_rect(mx, my, st->window_w - 170, 142, 80, 28))
+                { zenity_launch(st, "Select Save Directory", true, 3); return true; }
+
+            /* ── Transfer section ──────────────────────── */
+            /* Buffer (x0+60=80, y=204), Timeout (x0+230=250, y=204) */
+            { char buf[32];
+              snprintf(buf, sizeof(buf), "%d", cfg->buffer_size);
+              if (ui_text_field_click(st, mx, my, 80, 204, 80, 28, 13, buf, false)) return true;
+              snprintf(buf, sizeof(buf), "%d", cfg->timeout_seconds);
+              if (ui_text_field_click(st, mx, my, 250, 204, 60, 28, 14, buf, false)) return true; }
+            /* Max Conn (x0+85=105, y=238), Bandwidth (x0+245=265, y=238) */
+            { char buf[32];
+              snprintf(buf, sizeof(buf), "%d", cfg->max_connections);
+              if (ui_text_field_click(st, mx, my, 105, 238, 55, 28, 15, buf, false)) return true;
+              snprintf(buf, sizeof(buf), "%d", cfg->send_bandwidth_limit);
+              if (ui_text_field_click(st, mx, my, 265, 238, 80, 28, 16, buf, false)) return true; }
+            /* Overwrite policy (px=120/193/284, y=272) */
+            if (ui_in_rect(mx, my, 120, 272, 65, 28)) { strncpy(cfg->overwrite_policy, "rename", 15); return true; }
+            if (ui_in_rect(mx, my, 193, 272, 83, 28)) { strncpy(cfg->overwrite_policy, "overwrite", 15); return true; }
+            if (ui_in_rect(mx, my, 284, 272, 42, 28)) { strncpy(cfg->overwrite_policy, "skip", 15); return true; }
+            /* Auto Accept toggle: label ~100px, ON at x0+110=130, OFF at 174 (y=306) */
+            if (ui_in_rect(mx, my, 130, 306, 40, 28)) { cfg->auto_accept = true; return true; }
+            if (ui_in_rect(mx, my, 174, 306, 40, 28)) { cfg->auto_accept = false; return true; }
+            /* Show Progress toggle: label ~117px, ON at x0+127=147, OFF at 191 (y=340) */
+            if (ui_in_rect(mx, my, 147, 340, 40, 28)) { cfg->show_progress = true; return true; }
+            if (ui_in_rect(mx, my, 191, 340, 40, 28)) { cfg->show_progress = false; return true; }
+
+            /* ── Discovery section ──────────────────────── */
+            /* Discovery toggle: label ~80px, ON at x0+90=110 (y=402) */
+            if (ui_in_rect(mx, my, 110, 402, 40, 28)) { cfg->discovery_enabled = true; return true; }
+            if (ui_in_rect(mx, my, 154, 402, 40, 28)) { cfg->discovery_enabled = false; return true; }
+            /* Interval (x0+75=95, y=436), TTL (x0+195=215, y=436) */
+            { char buf[32];
+              snprintf(buf, sizeof(buf), "%d", cfg->discovery_interval);
+              if (ui_text_field_click(st, mx, my, 95, 436, 50, 28, 17, buf, false)) return true;
+              snprintf(buf, sizeof(buf), "%d", cfg->discovery_ttl);
+              if (ui_text_field_click(st, mx, my, 215, 436, 50, 28, 18, buf, false)) return true; }
+
+            /* ── Logging section ────────────────────────── */
+            /* Log level (lx=80/141/187/238, y=498) */
+            if (ui_in_rect(mx, my, 80, 498, 55, 28)) { strncpy(cfg->log_level, "debug", 15); return true; }
+            if (ui_in_rect(mx, my, 141, 498, 40, 28)) { strncpy(cfg->log_level, "info", 15); return true; }
+            if (ui_in_rect(mx, my, 187, 498, 45, 28)) { strncpy(cfg->log_level, "warn", 15); return true; }
+            if (ui_in_rect(mx, my, 238, 498, 48, 28)) { strncpy(cfg->log_level, "error", 15); return true; }
+
+            /* ── Save Config button (x0=20, y=540) ──────── */
+            if (ui_in_rect(mx, my, 20, 540, 140, 32)) {
+                config_save(cfg);
+                snprintf(st->status_text, sizeof(st->status_text), "Config saved to %s", config_user_path());
+                return true;
+            }
+            break;
+        }
         }
     }
+
+    /* ── Helper: sync input_buffer back to the bound field ────── */
+    /* (defined once, used by TEXTINPUT, BACKSPACE, DELETE, RETURN) */
 
     /* Keyboard input for text fields */
     if (e->type == SDL_TEXTINPUT && st->active_input > 0) {
         size_t len = strlen(st->input_buffer);
         size_t tlen = strlen(e->text.text);
         if (len + tlen < sizeof(st->input_buffer) - 1) {
-            strcat(st->input_buffer, e->text.text);
-            st->input_cursor = strlen(st->input_buffer);
-            if (st->active_input == 2)
-                strncpy(st->send_target_ip, st->input_buffer, sizeof(st->send_target_ip) - 1);
-            if (st->active_input == 4)
-                strncpy(st->recv_target_ip, st->input_buffer, sizeof(st->recv_target_ip) - 1);
-            if (st->active_input == 5)
-                st->send_port = atoi(st->input_buffer);
-            if (st->active_input == 6)
-                st->recv_port = atoi(st->input_buffer);
-            if (st->active_input == 7)
-                st->scan_port = atoi(st->input_buffer);
-            if (st->active_input == 7)
-                st->scan_port = atoi(st->input_buffer);
+            /* Insert at cursor position, not just append */
+            memmove(st->input_buffer + st->input_cursor + tlen,
+                    st->input_buffer + st->input_cursor,
+                    len - st->input_cursor + 1);
+            memcpy(st->input_buffer + st->input_cursor, e->text.text, tlen);
+            st->input_cursor += tlen;
         }
-        return true;
+        goto sync_field;
     }
 
     if (e->type == SDL_KEYDOWN) {
+        int len = strlen(st->input_buffer);
+
+        /* Backspace */
         if (e->key.keysym.sym == SDLK_BACKSPACE && st->active_input > 0) {
-            int len = strlen(st->input_buffer);
             if (len > 0 && st->input_cursor > 0) {
                 memmove(st->input_buffer + st->input_cursor - 1,
                         st->input_buffer + st->input_cursor,
                         len - st->input_cursor + 1);
                 st->input_cursor--;
             }
-            if (st->active_input == 2)
-                strncpy(st->send_target_ip, st->input_buffer, sizeof(st->send_target_ip) - 1);
-            if (st->active_input == 4)
-                strncpy(st->recv_target_ip, st->input_buffer, sizeof(st->recv_target_ip) - 1);
-            if (st->active_input == 5)
-                st->send_port = atoi(st->input_buffer);
-            if (st->active_input == 6)
-                st->recv_port = atoi(st->input_buffer);
-            if (st->active_input == 7)
-                st->scan_port = atoi(st->input_buffer);
+            goto sync_field;
+        }
+
+        /* Delete */
+        if (e->key.keysym.sym == SDLK_DELETE && st->active_input > 0) {
+            if (st->input_cursor < len) {
+                memmove(st->input_buffer + st->input_cursor,
+                        st->input_buffer + st->input_cursor + 1,
+                        len - st->input_cursor);
+            }
+            goto sync_field;
+        }
+
+        /* Cursor movement */
+        if (e->key.keysym.sym == SDLK_LEFT && st->active_input > 0) {
+            if (st->input_cursor > 0) st->input_cursor--;
             return true;
         }
+        if (e->key.keysym.sym == SDLK_RIGHT && st->active_input > 0) {
+            if (st->input_cursor < len) st->input_cursor++;
+            return true;
+        }
+        if (e->key.keysym.sym == SDLK_HOME && st->active_input > 0) {
+            st->input_cursor = 0;
+            return true;
+        }
+        if (e->key.keysym.sym == SDLK_END && st->active_input > 0) {
+            st->input_cursor = len;
+            return true;
+        }
+
+        /* Confirm / cancel input */
         if (e->key.keysym.sym == SDLK_RETURN || e->key.keysym.sym == SDLK_ESCAPE) {
             st->active_input = 0;
             SDL_StopTextInput();
             return true;
         }
     }
+
+    return false;
+
+sync_field:
+    /* Sync input_buffer to the bound state field */
+    if (st->active_input == 2)
+        strncpy(st->send_target_ip, st->input_buffer, sizeof(st->send_target_ip) - 1);
+    if (st->active_input == 4)
+        strncpy(st->recv_target_ip, st->input_buffer, sizeof(st->recv_target_ip) - 1);
+    if (st->active_input == 5)
+        st->send_port = atoi(st->input_buffer);
+    if (st->active_input == 6)
+        st->recv_port = atoi(st->input_buffer);
+    if (st->active_input == 7)
+        st->scan_port = atoi(st->input_buffer);
+    /* Settings page fields (10-18) */
+    if (st->active_input == 10) st->gui_cfg.port = atoi(st->input_buffer);
+    if (st->active_input == 11) strncpy(st->gui_cfg.address, st->input_buffer, sizeof(st->gui_cfg.address) - 1);
+    if (st->active_input == 12) strncpy(st->gui_cfg.save_dir, st->input_buffer, sizeof(st->gui_cfg.save_dir) - 1);
+    if (st->active_input == 13) st->gui_cfg.buffer_size = atoi(st->input_buffer);
+    if (st->active_input == 14) st->gui_cfg.timeout_seconds = atoi(st->input_buffer);
+    if (st->active_input == 15) st->gui_cfg.max_connections = atoi(st->input_buffer);
+    if (st->active_input == 16) st->gui_cfg.send_bandwidth_limit = atoi(st->input_buffer);
+    if (st->active_input == 17) st->gui_cfg.discovery_interval = atoi(st->input_buffer);
+    if (st->active_input == 18) st->gui_cfg.discovery_ttl = atoi(st->input_buffer);
+    return true;
 
     return false;
 }

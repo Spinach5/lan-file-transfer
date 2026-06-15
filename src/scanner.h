@@ -3,10 +3,13 @@
 
 #include <stdint.h>
 
-/* Start a LAN scan for devices listening on the given port.
-   Non-blocking: spawns a background thread. Results delivered via SDL_UserEvent:
-   - USEREVENT_SCAN_FOUND (struct event_scan_found) for each device
-   - USEREVENT_SCAN_DONE  (struct event_scan_done) when finished */
+/* Start a LAN scan for devices on the given port.
+   Uses UDP broadcast + TCP connect scan.
+   Non-blocking: spawns background thread. Results via SDL_UserEvent. */
 void scanner_start(uint16_t port);
+
+/* Fill ips[count] with local non-loopback IPv4 addresses.
+   Returns number of IPs found (max 8). */
+int scanner_get_local_ips(char ips[][64], int max_count);
 
 #endif /* SCANNER_H */

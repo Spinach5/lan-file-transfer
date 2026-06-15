@@ -2,3 +2,4 @@ build/
 lanft_history.dat
 /docs
 /.claude
+src/CMake*

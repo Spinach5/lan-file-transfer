@@ -14,8 +14,10 @@
 #define FT_MAX_FILENAME   256
 
 /* Protocol type */
+#ifndef FT_PROTO_TCP
 #define FT_PROTO_TCP  0
 #define FT_PROTO_UDP  1
+#endif
 
 /* Meta handshake: sender → receiver */
 struct ft_meta {
@@ -73,6 +75,13 @@ struct event_error {
 
 struct event_scan_done {
     int total_found;
+};
+
+struct event_incoming_transfer {
+    char ip[64];
+    char hostname[256];
+    char filename[256];
+    uint64_t file_size;
 };
 
 #endif /* PROTOCOL_H */
