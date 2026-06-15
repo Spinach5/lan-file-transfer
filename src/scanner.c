@@ -221,7 +221,7 @@ static void scanner_run(uint16_t port)
         inet_pton(AF_INET, bcast_ip, &baddr.sin_addr);
 
         uint32_t magic = FT_MAGIC;
-        sendto(udp_fd, &magic, 4, 0,
+        sendto(udp_fd, (const char *)&magic, 4, 0,
                (struct sockaddr *)&baddr, sizeof(baddr));
 
         /* Collect responses (up to 2 seconds) */
@@ -229,7 +229,7 @@ static void scanner_run(uint16_t port)
             uint8_t buf[260];
             struct sockaddr_in src;
             socklen_t srclen = sizeof(src);
-            ssize_t n = recvfrom(udp_fd, buf, sizeof(buf), 0,
+            ssize_t n = recvfrom(udp_fd, (char *)buf, sizeof(buf), 0,
                                  (struct sockaddr *)&src, &srclen);
             if (n < 4) continue;
             uint32_t rmagic;

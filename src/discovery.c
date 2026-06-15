@@ -58,7 +58,7 @@ static void *discovery_thread(void *arg)
         uint8_t buf[512];
         struct sockaddr_in src;
         socklen_t srclen = sizeof(src);
-        ssize_t n = recvfrom(g_disc_fd, buf, sizeof(buf), 0,
+        ssize_t n = recvfrom(g_disc_fd, (char *)buf, sizeof(buf), 0,
                              (struct sockaddr *)&src, &srclen);
         if (n < 4) continue;
 
@@ -73,7 +73,7 @@ static void *discovery_thread(void *arg)
         memset(resp + 4, 0, 256);
         strncpy((char *)(resp + 4), host, 255);
 
-        sendto(g_disc_fd, resp, sizeof(resp), 0,
+        sendto(g_disc_fd, (const char *)resp, sizeof(resp), 0,
                (struct sockaddr *)&src, srclen);
     }
 
