@@ -462,13 +462,15 @@ static void tcp_recv_file(struct net_context *nc, const char *savepath)
     log_write("[RECV] tcp_recv_file: fd=%d, save=%s\n", fd, savepath);
     if (fd < 0) { log_write("[RECV] BAD FD!\n"); push_error("No socket"); return; }
 
-    /* Read meta */
+    /* Read meta — use a short initial timeout to filter out scanner probes.
+       Scanners connect and immediately close without sending data, which
+       causes select() to signal readability (EOF) within milliseconds. */
     log_write("[RECV] waiting for meta...\n");
     struct ft_meta meta;
-    int meta_timeout_ms = (g_timeout_seconds > 0) ? g_timeout_seconds * 1000 : 30000;
-    if (sock_read_full(fd, &meta, sizeof(meta), meta_timeout_ms) != 0) {
-        log_write("[RECV] FAILED to receive meta!\n");
-        push_error("Failed to receive file metadata (timeout)");
+    if (sock_read_full(fd, &meta, sizeof(meta), 1500) != 0) {
+        /* Short timeout (1.5s): likely a scanner probe, not a real sender.
+           Don't push an error — just quietly continue listening. */
+        log_write("[RECV] no meta in 1.5s, likely scanner probe — ignoring\n");
         return;
     }
     log_write("[RECV] got meta: name=%s, size=%lu, flags=%d\n",
