@@ -72,4 +72,8 @@ endif()
 
 if(WIN32)
     target_link_libraries(lanft -lws2_32 -liphlpapi -lshell32 -lcomdlg32 -lole32)
+    # MSYS2: avoid CRT mismatch by preferring static libgcc
+    if(MINGW)
+        target_link_options(lanft PRIVATE -static-libgcc -static-libstdc++)
+    endif()
 endif()
