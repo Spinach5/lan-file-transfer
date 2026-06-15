@@ -57,10 +57,11 @@ else()
 endif()
 
 add_executable(lanft ${SOURCES})
-# Windows: always build as console app so CLI commands have visible output.
-# GUI works fine with a console window in the background.
+# Windows: force console subsystem so CLI output is visible.
+# Without this, SDL2 pulls in -mwindows which hides stdout/stderr.
 if(WIN32 AND BUILD_GUI)
     set_target_properties(lanft PROPERTIES WIN32_EXECUTABLE FALSE)
+    target_link_options(lanft PRIVATE -mconsole)
 endif()
 
 target_include_directories(lanft PRIVATE
