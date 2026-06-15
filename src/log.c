@@ -55,10 +55,10 @@ int log_init(const struct lanft_config *cfg)
 
     g_log_fp = fopen(path, "a");
     if (!g_log_fp) {
-        fprintf(stderr, "[log] cannot open %s: %s\n", path, strerror(errno));
-        return -1;
+        /* silently fall back to stderr-only — log file is optional */
+        return 0;
     }
-    fprintf(stderr, "[log] writing to %s (level=%s)\n", path, cfg->log_level);
+    /* Only print this on first successful open */
     return 0;
 }
 

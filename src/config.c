@@ -124,7 +124,7 @@ void config_set_defaults(struct lanft_config *cfg)
     cfg->discovery_interval = 5;
     cfg->discovery_ttl      = 1;
     strncpy(cfg->log_level, "info", sizeof(cfg->log_level) - 1);
-    strncpy(cfg->log_file, "/var/log/lanft/", sizeof(cfg->log_file) - 1);
+    cfg->log_file[0] = '\0';  /* default: stderr only */
     cfg->send_bandwidth_limit = 0;
 }
 
