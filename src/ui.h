@@ -43,6 +43,9 @@ struct app_state {
     /* Scan page */
     char scan_status[256];
     int  scan_port;
+    /* Local IPs (shown so user can tell others what to connect to) */
+    char local_ips[8][64];
+    int  local_ip_count;
     struct {
         char ip[64];
         char hostname[256];

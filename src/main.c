@@ -346,6 +346,7 @@ int main(int argc, char **argv)
     if (state.gui_cfg.discovery_enabled)        /* 启动UDP发现应答 */
         discovery_start((uint16_t)state.gui_cfg.port);
     /* 从配置中填充默认值 */
+    state.local_ip_count = scanner_get_local_ips(state.local_ips, 8);
     state.scan_port = state.gui_cfg.port;
     state.send_port = state.gui_cfg.port;
     state.recv_port = state.gui_cfg.port;

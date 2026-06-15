@@ -576,18 +576,36 @@ static void render_tab_bar(SDL_Renderer *r, struct app_state *st)
 
 static void render_scan_page(SDL_Renderer *r, struct app_state *st)
 {
-    int list_y = 88, list_h = st->window_h - 128;
+    int y = 46, list_y, list_h;
 
-    ui_button(r, "Scan", 20, 46, 100, 32, 0, 0, false);
-    ui_draw_text(r, "Port:", 128, 52, COLOR_TEXT);
+    /* ── Row 1: Scan button + port ───────────────────────── */
+    ui_button(r, "Scan", 20, y, 100, 32, 0, 0, false);
+    ui_draw_text(r, "Port:", 128, y + 4, COLOR_TEXT);
     {
         char pbuf[16];
         snprintf(pbuf, sizeof(pbuf), "%d", st->scan_port);
-        ui_text_field(r, 175, 46, 65, 28, pbuf,
+        ui_text_field(r, 175, y, 65, 28, pbuf,
                       st->active_input == 7, st->active_input == 7 ? st->input_cursor : 0, "9876", false);
     }
-    ui_draw_text(r, st->scan_status, 260, 52, COLOR_DIM);
+    ui_draw_text(r, st->scan_status, 260, y + 4, COLOR_DIM);
+    y += 40;
 
+    /* ── Local IPs ───────────────────────────────────────── */
+    if (st->local_ip_count > 0) {
+        ui_draw_text(r, "Your IPs:", 20, y + 4, COLOR_ACCENT);
+        char ip_list[512] = "";
+        for (int i = 0; i < st->local_ip_count; i++) {
+            if (i > 0) strcat(ip_list, "  ");
+            strcat(ip_list, st->local_ips[i]);
+        }
+        ui_draw_text(r, ip_list, 100, y + 4, COLOR_TEXT);
+        y += 28;
+    }
+    y += 4;
+
+    /* ── Device list ──────────────────────────────────────── */
+    list_y = y;
+    list_h = st->window_h - list_y - 40;
     ui_draw_rect(r, 20, list_y, st->window_w - 40, list_h, COLOR_SURFACE);
     ui_draw_text(r, "IP Address", 30, list_y + 5, COLOR_DIM);
     ui_draw_text(r, "Hostname", 220, list_y + 5, COLOR_DIM);
@@ -1244,9 +1262,10 @@ bool ui_handle_event(SDL_Event *e, struct app_state *st)
                 if (ui_text_field_click(st, mx, my, 175, 46, 65, 28, 7, spbuf, false))
                     return true;
             }
-            /* Device list selection */
+            /* Device list selection (list_y matches render_scan_page layout) */
             {
-                int list_y = 88;
+                int list_y = 90;
+                if (st->local_ip_count > 0) list_y += 28;
                 for (int i = 0; i < st->device_count; i++) {
                     int ey = list_y + 28 + i * 30;
                     if (ui_in_rect(mx, my, 20, ey, st->window_w - 40, 28)) {
