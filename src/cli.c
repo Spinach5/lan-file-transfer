@@ -11,6 +11,9 @@
 #include <string.h>
 #include <time.h>
 #include <sys/stat.h>
+#ifndef _WIN32
+#include <ifaddrs.h>
+#endif
 
 #define CLI_VERSION "lanft v1.0"
 
@@ -119,6 +122,7 @@ static void print_help(const char *prog)
     printf("  -p, --port=NUM        Port number (default: 9876)\n");
     printf("  --address=IP          Target IP (send: required; recv: default 0.0.0.0)\n");
     printf("  --history             Show transfer history\n");
+    printf("  --scan                Show your IPs and scan LAN for devices\n");
     printf("  --save-dir=DIR        Save directory (default: ~/Downloads)\n");
     printf("  --buffer-size=N       Transfer buffer size (default: 65536)\n");
     printf("  --timeout=N           Timeout in seconds (default: 30)\n");
@@ -174,6 +178,7 @@ int cli_main(int argc, char **argv)
         {"bandwidth-limit",required_argument, 0, 2009},
         {"auto-accept",    no_argument,       0, 2010},
         {"no-auto-accept", no_argument,       0, 2011},
+        {"scan",           no_argument,       0, 2014},
         {"log-file",       required_argument, 0, 2013},
         {"config",         required_argument, 0, 2012},
         {0, 0, 0, 0}
@@ -239,6 +244,9 @@ int cli_main(int argc, char **argv)
         case 2011: /* --no-auto-accept */
             cfg.auto_accept = false;
             break;
+        case 2014: /* --scan */
+            cfg.show_progress = false; /* signal: do scan and exit */
+            break;
         case 2013: /* --log-file */
             strncpy(cfg.log_file, optarg, sizeof(cfg.log_file) - 1);
             break;
@@ -279,6 +287,107 @@ int cli_main(int argc, char **argv)
                        stt==0?"OK":(stt==1?"BAD":"STOP"), prog, spd);
             }
             fclose(fp);
+            return 0;
+        }
+    }
+
+    /* ── Scan mode ─────────────────────────────────────────── */
+    {
+        bool do_scan = false;
+        for (int i = 1; i < argc; i++)
+            if (strcmp(argv[i], "--scan") == 0) { do_scan = true; break; }
+        if (do_scan) {
+            /* Show local IPs */
+            char local_ips[8][64];
+            int n = scanner_get_local_ips(local_ips, 8);
+            printf("Your IPs:\n");
+            for (int i = 0; i < n; i++)
+                printf("  %s\n", local_ips[i]);
+            if (n == 0) printf("  (none found)\n");
+            printf("\nScanning LAN on port %d...\n", cfg.port);
+
+            /* Get subnets */
+            int subnet_count = 0;
+            char subnets[16][64];
+            {
+                /* Quick subnet collection — same logic as scanner.c */
+#ifdef _WIN32
+                /* Skip Windows for now — scanner.c handles it */
+#else
+                struct ifaddrs *ifaddr, *ifa;
+                if (getifaddrs(&ifaddr) == 0) {
+                    for (ifa = ifaddr; ifa && subnet_count < 16; ifa = ifa->ifa_next) {
+                        if (!ifa->ifa_addr || ifa->ifa_addr->sa_family != AF_INET) continue;
+                        if (strcmp(ifa->ifa_name, "lo") == 0) continue;
+                        struct sockaddr_in *addr = (struct sockaddr_in *)ifa->ifa_addr;
+                        uint32_t ip = ntohl(addr->sin_addr.s_addr);
+                        if ((ip & 0xFF000000) == 0x7F000000) continue;
+                        char s[64];
+                        snprintf(s, sizeof(s), "%d.%d.%d",
+                                 (ip>>24)&0xFF, (ip>>16)&0xFF, (ip>>8)&0xFF);
+                        bool dup = false;
+                        for (int j = 0; j < subnet_count; j++)
+                            if (strcmp(subnets[j], s) == 0) { dup = true; break; }
+                        if (!dup) { strncpy(subnets[subnet_count], s, 63); subnet_count++; }
+                    }
+                    freeifaddrs(ifaddr);
+                }
+#endif
+            }
+
+            /* UDP broadcast probe */
+            for (int s = 0; s < subnet_count; s++) {
+                socket_t udp_fd = socket(AF_INET, SOCK_DGRAM, 0);
+                if (udp_fd == INVALID_FD) continue;
+                int broadcast = 1, reuse = 1;
+                setsockopt(udp_fd, SOL_SOCKET, SO_BROADCAST,
+                           (const char *)&broadcast, sizeof(broadcast));
+                setsockopt(udp_fd, SOL_SOCKET, SO_REUSEADDR,
+                           (const char *)&reuse, sizeof(reuse));
+                struct timeval tv = {0, 500000};
+                setsockopt(udp_fd, SOL_SOCKET, SO_RCVTIMEO,
+                           (const char *)&tv, sizeof(tv));
+
+                /* Bind to any port to receive responses */
+                struct sockaddr_in baddr;
+                memset(&baddr, 0, sizeof(baddr));
+                baddr.sin_family = AF_INET;
+                baddr.sin_addr.s_addr = INADDR_ANY;
+                baddr.sin_port = 0;
+                bind(udp_fd, (struct sockaddr *)&baddr, sizeof(baddr));
+
+                /* Send probe to broadcast */
+                char bcast_ip[64];
+                snprintf(bcast_ip, sizeof(bcast_ip), "%s.255", subnets[s]);
+                memset(&baddr, 0, sizeof(baddr));
+                baddr.sin_family = AF_INET;
+                baddr.sin_port = htons(cfg.port);
+                inet_pton(AF_INET, bcast_ip, &baddr.sin_addr);
+
+                uint32_t magic = FT_MAGIC;
+                sendto(udp_fd, (const char *)&magic, 4, 0,
+                       (struct sockaddr *)&baddr, sizeof(baddr));
+
+                /* Collect responses */
+                for (int r = 0; r < 4; r++) {
+                    uint8_t buf[260];
+                    struct sockaddr_in src;
+                    socklen_t srclen = sizeof(src);
+                    ssize_t nr = recvfrom(udp_fd, (char *)buf, sizeof(buf), 0,
+                                         (struct sockaddr *)&src, &srclen);
+                    if (nr < 4) continue;
+                    uint32_t rmagic;
+                    memcpy(&rmagic, buf, 4);
+                    if (rmagic != FT_MAGIC) continue;
+                    char ip[64];
+                    inet_ntop(AF_INET, &src.sin_addr, ip, sizeof(ip));
+                    char host[256] = "";
+                    if (nr >= 260) strncpy(host, (char *)(buf + 4), 255);
+                    printf("  %-18s %s\n", ip, host);
+                }
+                close_sock(udp_fd);
+            }
+            printf("\nScan complete.\n");
             return 0;
         }
     }

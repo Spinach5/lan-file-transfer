@@ -8,4 +8,8 @@
 void discovery_start(uint16_t port);
 void discovery_stop(void);
 
+/* Collect all local non-loopback IPv4 addresses for display.
+   Returns number of IPs found (max 8). */
+int scanner_get_local_ips(char ips[][64], int max_count);
+
 #endif

@@ -12,6 +12,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <pthread.h>
+#ifndef _WIN32
+#include <ifaddrs.h>
+#endif
 
 static volatile bool g_disc_running = false;
 static socket_t g_disc_fd = INVALID_FD;
@@ -98,4 +101,49 @@ void discovery_stop(void)
         close_sock(g_disc_fd);
         g_disc_fd = INVALID_FD;
     }
+}
+
+/* Collect local non-loopback IPv4 addresses */
+int scanner_get_local_ips(char ips[][64], int max_count)
+{
+    int count = 0;
+#ifdef _WIN32
+    ULONG bufLen = 15000;
+    IP_ADAPTER_ADDRESSES *adapters = malloc(bufLen);
+    if (!adapters) return 0;
+    if (GetAdaptersAddresses(AF_INET, GAA_FLAG_INCLUDE_PREFIX, NULL, adapters, &bufLen) != 0)
+        { free(adapters); return 0; }
+    for (IP_ADAPTER_ADDRESSES *a = adapters; a && count < max_count; a = a->Next) {
+        if (a->OperStatus != IfOperStatusUp) continue;
+        for (IP_ADAPTER_UNICAST_ADDRESS *u = a->FirstUnicastAddress; u; u = u->Next) {
+            if (u->Address.lpSockaddr->sa_family != AF_INET) continue;
+            struct sockaddr_in *sin = (struct sockaddr_in *)u->Address.lpSockaddr;
+            uint32_t ip = ntohl(sin->sin_addr.s_addr);
+            if ((ip & 0xFF000000) == 0x7F000000) continue;
+            inet_ntop(AF_INET, &sin->sin_addr, ips[count], 63);
+            count++;
+            if (count >= max_count) break;
+        }
+    }
+    free(adapters);
+#else
+    struct ifaddrs *ifaddr, *ifa;
+    if (getifaddrs(&ifaddr) == -1) return 0;
+    for (ifa = ifaddr; ifa && count < max_count; ifa = ifa->ifa_next) {
+        if (!ifa->ifa_addr || ifa->ifa_addr->sa_family != AF_INET) continue;
+        if (strcmp(ifa->ifa_name, "lo") == 0) continue;
+        struct sockaddr_in *addr = (struct sockaddr_in *)ifa->ifa_addr;
+        uint32_t ip = ntohl(addr->sin_addr.s_addr);
+        if ((ip & 0xFF000000) == 0x7F000000) continue;
+        char ip_str[64];
+        inet_ntop(AF_INET, &addr->sin_addr, ip_str, sizeof(ip_str));
+        if (strcmp(ip_str, "0.0.0.0") == 0) continue;
+        bool dup = false;
+        for (int i = 0; i < count; i++)
+            if (strcmp(ips[i], ip_str) == 0) { dup = true; break; }
+        if (!dup) { strncpy(ips[count], ip_str, 63); count++; }
+    }
+    freeifaddrs(ifaddr);
+#endif
+    return count;
 }
