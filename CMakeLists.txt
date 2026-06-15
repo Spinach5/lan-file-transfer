@@ -57,6 +57,11 @@ else()
 endif()
 
 add_executable(lanft ${SOURCES})
+# Windows: always build as console app so CLI commands have visible output.
+# GUI works fine with a console window in the background.
+if(WIN32 AND BUILD_GUI)
+    set_target_properties(lanft PROPERTIES WIN32_EXECUTABLE FALSE)
+endif()
 
 target_include_directories(lanft PRIVATE
     ${LIBWEBSOCKETS_INCLUDE_DIRS}
