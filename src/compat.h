@@ -33,9 +33,14 @@
 #define chdir(p)          _chdir(p)
 #define mkdir(p,m)        _mkdir(p)
 #define unlink(p)         _unlink(p)
+/* MinGW provides stat/fstat natively; these macros only needed for MSVC */
+#ifndef __GNUC__
 #define stat              _stat
 #define fstat             _fstat
 #define lstat             _stat   /* no symlinks on Windows, lstat ≡ stat */
+#else
+#define lstat             stat    /* MinGW: lstat ≡ stat (no symlinks) */
+#endif
 
 typedef int socklen_t;
 typedef SOCKET socket_t;
