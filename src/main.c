@@ -386,9 +386,16 @@ int main(int argc, char **argv)
                 break;
 
             case SDL_MOUSEWHEEL:
-                /* Scroll content up/down on tabs that overflow */
-                state.scroll_offset += event.wheel.y * 30;
-                if (state.scroll_offset > 0) state.scroll_offset = 0;
+                /* Scroll content on tabs that overflow */
+                if (event.wheel.y != 0) {
+                    state.scroll_offset += event.wheel.y * 30;
+                    if (state.scroll_offset > 0) state.scroll_offset = 0;
+                    /* Don't scroll past content: settings page is ~560px tall */
+                    int visible = state.window_h - 64;
+                    int min_scroll = -(560 - visible);
+                    if (min_scroll > 0) min_scroll = 0;
+                    if (state.scroll_offset < min_scroll) state.scroll_offset = min_scroll;
+                }
                 break;
 
             case SDL_KEYDOWN:
