@@ -1110,10 +1110,6 @@ static void render_settings_page(SDL_Renderer *r, struct app_state *st)
         int tw, th; ui_text_size("Save Config", &tw, &th);
         ui_draw_text(r, "Save Config", x0 + (140 - tw)/2, y + (32 - th)/2, COLOR_BG);
     }
-
-    /* Status line */
-    y += 50;
-    ui_draw_text(r, st->status_text, x0, y, COLOR_DIM);
 }
 
 /* ── Main render ───────────────────────────────────────────── */
@@ -1123,6 +1119,11 @@ void ui_render(SDL_Renderer *renderer, struct app_state *state)
     ui_draw_rect(renderer, 0, 0, state->window_w, state->window_h, COLOR_BG);
     render_tab_bar(renderer, state);
 
+    /* Clip page content to stay below tab bar and above status bar */
+    {
+        SDL_Rect clip = {0, 36, state->window_w, state->window_h - 64};
+        SDL_RenderSetClipRect(renderer, &clip);
+    }
     switch (state->current_tab) {
     case TAB_SCAN:     render_scan_page(renderer, state); break;
     case TAB_SEND:     render_send_page(renderer, state); break;
@@ -1130,6 +1131,7 @@ void ui_render(SDL_Renderer *renderer, struct app_state *state)
     case TAB_HISTORY:  render_history_page(renderer, state); break;
     case TAB_SETTINGS: render_settings_page(renderer, state); break;
     }
+    SDL_RenderSetClipRect(renderer, NULL);
 
     /* Modal overlay — error messages */
     if (state->modal_visible) {
