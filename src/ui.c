@@ -942,7 +942,7 @@ static void render_num_field(SDL_Renderer *r, int x, int y, int w,
 
 static void render_settings_page(SDL_Renderer *r, struct app_state *st)
 {
-    int x0 = 20, y = 50, W = st->window_w;
+    int x0 = 20, y = 50 + st->scroll_offset, W = st->window_w;
     struct lanft_config *cfg = &st->gui_cfg;
     SDL_Color c_text = COLOR_TEXT;
     SDL_Color c_surf = COLOR_SURFACE;
@@ -1352,6 +1352,7 @@ bool ui_handle_event(SDL_Event *e, struct app_state *st)
             break;
 
         case TAB_SETTINGS: {
+            my -= st->scroll_offset;
             struct lanft_config *cfg = &st->gui_cfg;
             /* ── Core section ──────────────────────────── */
             /* Protocol: TCP (x0+220=240, y=74) */

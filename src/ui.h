@@ -108,6 +108,7 @@ struct app_state {
     char status_text[256];
     int window_w;
     int window_h;
+    int scroll_offset;     /* for pages that overflow */
 
     /* Text input focus */
     int active_input;  /* 0=none, 1=send path, 2=send ip, 3=recv path, 4=recv ip */

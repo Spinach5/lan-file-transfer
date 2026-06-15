@@ -361,8 +361,7 @@ int main(int argc, char **argv)
     transfer_set_buffer_size(state.gui_cfg.buffer_size);
     transfer_set_timeout(state.gui_cfg.timeout_seconds);
     transfer_set_overwrite_policy(state.gui_cfg.overwrite_policy);
-    strncpy(state.status_text, "就绪 — 选择标签页开始 (Ready)",
-            sizeof(state.status_text) - 1);
+    state.status_text[0] = '\0';
     SDL_GetWindowSize(window, &state.window_w, &state.window_h);
 
     bool pending_send = false;   /* 发送请求待处理标志 */
@@ -384,6 +383,12 @@ int main(int argc, char **argv)
                     state.window_w = event.window.data1;
                     state.window_h = event.window.data2;
                 }
+                break;
+
+            case SDL_MOUSEWHEEL:
+                /* Scroll content up/down on tabs that overflow */
+                state.scroll_offset += event.wheel.y * 30;
+                if (state.scroll_offset > 0) state.scroll_offset = 0;
                 break;
 
             case SDL_KEYDOWN:
