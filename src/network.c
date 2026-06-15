@@ -43,8 +43,9 @@ struct net_context {
 
     /* UDP 相关 */
     socket_t udp_fd;            /* UDP 套接字 */
-    struct sockaddr_in udp_peer; /* UDP 对端地址（用于 sendto） */
-    bool udp_bound;             /* UDP 是否已绑定本地端口 */
+    struct sockaddr_in udp_peer;       /* UDP 对端地址（用于 sendto） */
+    struct sockaddr_in udp_last_sender; /* 最近一次 recvfrom 的来源地址 */
+    bool udp_bound;                    /* UDP 是否已绑定本地端口 */
 
     /* 取消标志，用于中断 accept 循环等阻塞操作 */
     volatile bool cancelled;
@@ -511,8 +512,15 @@ int net_udp_recv(struct net_context *nc, void *buf, size_t len, int timeout_ms)
 
     struct sockaddr_in src;
     socklen_t srclen = sizeof(src);
-    return recvfrom(nc->udp_fd, buf, len, 0,
-                    (struct sockaddr *)&src, &srclen);
+    int n = recvfrom(nc->udp_fd, buf, len, 0,
+                     (struct sockaddr *)&src, &srclen);
+    if (n > 0) nc->udp_last_sender = src;  /* Save sender for auto_accept */
+    return n;
+}
+
+const struct sockaddr_in *net_udp_last_sender(struct net_context *nc)
+{
+    return &nc->udp_last_sender;
 }
 
 /* ── 事件循环 ──────────────────────────────────────────────────── */

@@ -67,6 +67,10 @@ socket_t net_get_fd(struct net_context *nc);
 void net_cancel(struct net_context *nc);
 bool net_is_cancelled(struct net_context *nc);
 
+/* Get the source address of the last UDP packet received.
+   Used by auto_accept to show the sender's IP. */
+const struct sockaddr_in *net_udp_last_sender(struct net_context *nc);
+
 /* Destroy and free */
 void net_destroy(struct net_context *nc);
 

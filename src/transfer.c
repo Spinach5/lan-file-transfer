@@ -805,8 +805,27 @@ static void udp_recv_file(struct net_context *nc, const char *savepath)
 
     strncpy(g_last_recv_name, meta.filename, sizeof(g_last_recv_name) - 1);
 
+    /* ── Auto-accept check ───────────────────────────────── */
+    if (!g_auto_accept && g_accept_cb) {
+        char sender_ip[64] = "unknown";
+        char sender_host[256] = "";
+        const struct sockaddr_in *peer = net_udp_last_sender(nc);
+        if (peer && peer->sin_family == AF_INET) {
+            inet_ntop(AF_INET, &peer->sin_addr, sender_ip, sizeof(sender_ip));
+            getnameinfo((const struct sockaddr *)peer, sizeof(*peer),
+                        sender_host, sizeof(sender_host), NULL, 0, 0);
+        }
+        if (!g_accept_cb(sender_ip, sender_host, meta.filename, meta.total_size)) {
+            push_error("Transfer rejected by user");
+            return;
+        }
+    }
+
+    /* ── Output path + overwrite policy ───────────────────── */
     char fullpath[1024];
     snprintf(fullpath, sizeof(fullpath), "%s/%s", savepath, meta.filename);
+    char final_path[1024];
+    strncpy(final_path, fullpath, sizeof(final_path) - 1);
 
     uint64_t local_size = file_size(fullpath);
     uint64_t resume_offset = 0;
@@ -816,6 +835,7 @@ static void udp_recv_file(struct net_context *nc, const char *savepath)
         resume_offset = local_size;
         mode = "ab";
     } else if (local_size >= meta.total_size) {
+        /* Already complete */
         struct ft_meta_resp resp;
         resp.magic = FT_MAGIC;
         resp.resume_offset = meta.total_size;
@@ -825,8 +845,38 @@ static void udp_recv_file(struct net_context *nc, const char *savepath)
         }
         push_xfer_done();
         return;
+    } else if (local_size == 0 && resume_offset == 0) {
+        /* File exists but has size 0, or file doesn't exist yet.
+           Check overwrite policy if file already exists. */
+        struct stat exist_st;
+        if (stat(fullpath, &exist_st) == 0) {
+            if (strcmp(g_overwrite_policy, "skip") == 0) {
+                push_error("File already exists (overwrite_policy=skip)");
+                return;
+            } else if (strcmp(g_overwrite_policy, "rename") == 0) {
+                char base[900], ext[128];
+                const char *dot = strrchr(meta.filename, '.');
+                if (dot && dot != meta.filename) {
+                    size_t blen = dot - meta.filename;
+                    if (blen > sizeof(base) - 1) blen = sizeof(base) - 1;
+                    memcpy(base, meta.filename, blen); base[blen] = '\0';
+                    strncpy(ext, dot, sizeof(ext) - 1);
+                } else {
+                    strncpy(base, meta.filename, sizeof(base) - 1);
+                    ext[0] = '\0';
+                }
+                int n = 1;
+                while (n < 1000) {
+                    snprintf(final_path, sizeof(final_path), "%s/%s (%d)%s",
+                             savepath, base, n, ext);
+                    if (stat(final_path, &exist_st) != 0) break;
+                    n++;
+                }
+            }
+        }
     }
 
+    /* Send meta response */
     struct ft_meta_resp resp;
     memset(&resp, 0, sizeof(resp));
     resp.magic = FT_MAGIC;
@@ -836,9 +886,9 @@ static void udp_recv_file(struct net_context *nc, const char *savepath)
         usleep(50000);
     }
 
-    FILE *fp = fopen(fullpath, mode);
+    FILE *fp = fopen(final_path, mode);
     if (!fp) {
-        push_error("Cannot create file: %s", fullpath);
+        push_error("Cannot create file: %s", final_path);
         return;
     }
 
