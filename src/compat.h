@@ -45,8 +45,10 @@
 /* MinGW has stat() but not lstat(). Windows has no symlinks. */
 #ifdef __GNUC__
 #define lstat(p,s)  stat(p,s)
-/* io.h declares single-arg mkdir — use POSIX 2-arg version from sys/stat.h */
-#undef mkdir
+/* io.h declares single-arg mkdir(const char*), but POSIX code
+   expects mkdir(path, mode). Wrap to discard the unused mode. */
+static inline int compat_mkdir(const char *p, int mode) { (void)mode; return _mkdir(p); }
+#define mkdir(p,m)  compat_mkdir(p,m)
 #endif
 
 typedef int socklen_t;
