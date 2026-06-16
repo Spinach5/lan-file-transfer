@@ -497,10 +497,10 @@ static void tcp_recv_file(struct net_context *nc, const char *savepath)
        causes select() to signal readability (EOF) within milliseconds. */
     log_write("[RECV] waiting for meta...\n");
     struct ft_meta meta;
-    if (sock_read_full(fd, &meta, sizeof(meta), 1500) != 0) {
-        /* Short timeout (1.5s): likely a scanner probe, not a real sender.
+    if (sock_read_full(fd, &meta, sizeof(meta), 5000) != 0) {
+        /* 5s timeout: scanner probe → EOF instantly; slow sender gets time.
            Don't push an error — just quietly continue listening. */
-        log_write("[RECV] no meta in 1.5s, likely scanner probe — ignoring\n");
+        log_write("[RECV] no meta in 5s, likely scanner probe — ignoring\n");
         return;
     }
     log_write("[RECV] got meta: name=%s, size=%lu, flags=%d\n",
