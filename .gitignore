@@ -1,10 +1,4 @@
-build/
-lanft_history.dat
+CMakeUserPresets.json
+/build
 /docs
 /.claude
-src/CMake*
-/src/CMakeCache.txt
-/src/CMakeFiles/
-/src/cmake_install.cmake
-/src/lanft
-/src/Makefile
