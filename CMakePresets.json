@@ -1,0 +1,47 @@
+{
+    "version": 3,
+    "vendor": {
+        "conan": {}
+    },
+    "cmakeMinimumRequired": {
+        "major": 3,
+        "minor": 15,
+        "patch": 0
+    },
+    "configurePresets": [
+        {
+            "name": "conan-release",
+            "displayName": "'conan-release' config",
+            "description": "'conan-release' configure using 'Ninja' generator",
+            "generator": "Ninja",
+            "cacheVariables": {
+                "CMAKE_POLICY_DEFAULT_CMP0091": "NEW",
+                "CMAKE_BUILD_TYPE": "Release"
+            },
+            "toolchainFile": "conan_toolchain.cmake",
+            "binaryDir": "/home/zqw/biancheng/Project/websocket"
+        }
+    ],
+    "buildPresets": [
+        {
+            "name": "conan-release",
+            "configurePreset": "conan-release",
+            "jobs": 16
+        }
+    ],
+    "testPresets": [
+        {
+            "name": "conan-release",
+            "configurePreset": "conan-release",
+            "execution": {
+                "jobs": 16
+            },
+            "environment": {
+                "LD_LIBRARY_PATH": "/home/zqw/.conan2/p/b/libwe7e21572057626/p/lib:/home/zqw/.conan2/p/b/opensde2aceaa2abcb/p/lib:/home/zqw/.conan2/p/b/libarca7ca13f0788c/p/lib:/home/zqw/.conan2/p/b/zlibc0a23da583554/p/lib:/home/zqw/.conan2/p/b/libicb0b56ae16d90a/p/lib:$penv{LD_LIBRARY_PATH}",
+                "DYLD_LIBRARY_PATH": "/home/zqw/.conan2/p/b/libwe7e21572057626/p/lib:/home/zqw/.conan2/p/b/opensde2aceaa2abcb/p/lib:/home/zqw/.conan2/p/b/libarca7ca13f0788c/p/lib:/home/zqw/.conan2/p/b/zlibc0a23da583554/p/lib:/home/zqw/.conan2/p/b/libicb0b56ae16d90a/p/lib:$penv{DYLD_LIBRARY_PATH}",
+                "OPENSSL_MODULES": "/home/zqw/.conan2/p/b/opensde2aceaa2abcb/p/lib/ossl-modules",
+                "PATH": "/home/zqw/.conan2/p/b/opensde2aceaa2abcb/p/bin:/home/zqw/.conan2/p/b/libicb0b56ae16d90a/p/bin:$penv{PATH}"
+            }
+        }
+    ]
+}

@@ -1,7 +1,3 @@
-# nfpm packaging config for lanft
-# Build: nfpm package --packager deb  (or rpm)
-# https://nfpm.goreleaser.com/
-
 name: "lanft"
 version: "1.0.0"
 arch: "amd64"
@@ -20,9 +16,9 @@ license: "MIT"
 
 # ── Dependencies ──────────────────────────────────────────────
 depends:
-  # - libwebsockets-dev
-  # - libarchive-dev
-  # - libsdl2-dev
+   - libwebsockets-dev
+   - libarchive-dev
+   - libsdl2-dev
 
 recommends:
   - git

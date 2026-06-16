@@ -13,19 +13,10 @@ find_package(PkgConfig QUIET)
 
 # Check if Conan targets are available (set by CMakeDeps generator)
 if(EXISTS "${CMAKE_BINARY_DIR}/conan_toolchain.cmake" OR DEFINED ENV{CONAN_TOOLCHAIN_FILE})
-    message(STATUS "Conan toolchain detected — using Conan packages")
-    find_package(libwebsockets REQUIRED)
-    find_package(libarchive REQUIRED)
-    if(BUILD_GUI)
-        find_package(SDL2 REQUIRED)
-        find_package(sdl_ttf QUIET)
-        if(sdl_ttf_FOUND)
-            message(STATUS "  SDL2_ttf found via Conan")
-            add_definitions(-DHAVE_SDL2_TTF)
-        endif()
-    endif()
+    message(STATUS "Conan toolchain detected — using Conan for all deps")
 else()
-    message(STATUS "Using pkg-config for dependencies")
+    message(STATUS "No Conan — using system packages via pkg-config")
+endif()
 
 if(WIN32)
     # Windows: use vcpkg or manual paths
@@ -50,8 +41,6 @@ else()
     pkg_check_modules(LIBARCHIVE REQUIRED libarchive)
 endif()
 find_package(Threads REQUIRED)
-
-endif()  # Conan vs pkg-config
 
 # Base sources (always compiled)
 set(SOURCES
@@ -95,45 +84,29 @@ if(WIN32 AND BUILD_GUI)
     target_link_options(lanft PRIVATE -mconsole)
 endif()
 
+# All builds use pkg-config for linking. Conan just provides the paths.
+
 target_include_directories(lanft PRIVATE ${CMAKE_SOURCE_DIR}/src)
-
-if(EXISTS "${CMAKE_BINARY_DIR}/conan_toolchain.cmake" OR DEFINED ENV{CONAN_TOOLCHAIN_FILE})
-    # ── Conan targets ────────────────────────────────────────
-    target_link_libraries(lanft
-        libwebsockets::libwebsockets
-        libarchive::libarchive
-        Threads::Threads
-    )
-    if(BUILD_GUI)
-        target_link_libraries(lanft SDL2::SDL2)
-        if(sdl_ttf_FOUND)
-            target_link_libraries(lanft sdl_ttf::sdl_ttf)
-            target_include_directories(lanft PRIVATE ${sdl_ttf_INCLUDE_DIRS})
-        endif()
+target_include_directories(lanft PRIVATE
+    ${LIBWEBSOCKETS_INCLUDE_DIRS}
+    ${LIBARCHIVE_INCLUDE_DIRS}
+)
+if(BUILD_GUI)
+    target_include_directories(lanft PRIVATE ${SDL2_INCLUDE_DIRS})
+    if(SDL2_TTF_FOUND)
+        target_include_directories(lanft PRIVATE ${SDL2_TTF_INCLUDE_DIRS})
     endif()
-else()
-    # ── pkg-config fallback ───────────────────────────────────
-    target_include_directories(lanft PRIVATE
-        ${LIBWEBSOCKETS_INCLUDE_DIRS}
-        ${LIBARCHIVE_INCLUDE_DIRS}
-    )
-    if(BUILD_GUI)
-        target_include_directories(lanft PRIVATE ${SDL2_INCLUDE_DIRS})
-        if(SDL2_TTF_FOUND)
-            target_include_directories(lanft PRIVATE ${SDL2_TTF_INCLUDE_DIRS})
-        endif()
-    endif()
+endif()
 
-    target_link_libraries(lanft
-        ${LIBWEBSOCKETS_LDFLAGS}
-        ${LIBARCHIVE_LDFLAGS}
-        Threads::Threads
-    )
-    if(BUILD_GUI)
-        target_link_libraries(lanft ${SDL2_LIBRARIES})
-        if(SDL2_TTF_FOUND)
-            target_link_libraries(lanft ${SDL2_TTF_LDFLAGS})
-        endif()
+target_link_libraries(lanft
+    ${LIBWEBSOCKETS_LDFLAGS}
+    ${LIBARCHIVE_LDFLAGS}
+    Threads::Threads
+)
+if(BUILD_GUI)
+    target_link_libraries(lanft ${SDL2_LIBRARIES})
+    if(SDL2_TTF_FOUND)
+        target_link_libraries(lanft ${SDL2_TTF_LDFLAGS})
     endif()
 endif()
 
