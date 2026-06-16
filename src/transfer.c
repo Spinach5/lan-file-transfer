@@ -203,9 +203,18 @@ static int sock_read_full(socket_t fd, void *buf, size_t len, int timeout_ms)
         tv.tv_sec = timeout_ms / 1000;
         tv.tv_usec = (timeout_ms % 1000) * 1000;
         int ret = select(fd + 1, &fds, NULL, NULL, &tv);
-        if (ret <= 0) return -1;
+        if (ret < 0) { log_write("[sock_read_full] select error\n"); return -1; }
+        if (ret == 0) {
+            log_write("[sock_read_full] timeout after %dms, got %zu/%zu bytes\n",
+                      timeout_ms, received, len);
+            return -1;
+        }
         ssize_t n = sock_read(fd, p + received, len - received);
-        if (n <= 0) return -1;
+        if (n <= 0) {
+            log_write("[sock_read_full] recv EOF/error after %zu bytes (n=%zd)\n",
+                      received, n);
+            return -1;
+        }
         received += n;
     }
     return 0;
@@ -497,10 +506,12 @@ static void tcp_recv_file(struct net_context *nc, const char *savepath)
        causes select() to signal readability (EOF) within milliseconds. */
     log_write("[RECV] waiting for meta...\n");
     struct ft_meta meta;
-    if (sock_read_full(fd, &meta, sizeof(meta), 5000) != 0) {
-        /* 5s timeout: scanner probe → EOF instantly; slow sender gets time.
-           Don't push an error — just quietly continue listening. */
-        log_write("[RECV] no meta in 5s, likely scanner probe — ignoring\n");
+    /* Use configured timeout. Scanner probes close immediately (EOF in μs).
+       Slow senders (e.g. compressing large dirs) get the full timeout. */
+    int meta_timeout_ms = (g_timeout_seconds > 0) ? g_timeout_seconds * 1000 : 120000;
+    if (sock_read_full(fd, &meta, sizeof(meta), meta_timeout_ms) != 0) {
+        log_write("[RECV] no meta in %dms, likely scanner probe — ignoring\n",
+                  meta_timeout_ms);
         return;
     }
     log_write("[RECV] got meta: name=%s, size=%lu, flags=%d\n",
