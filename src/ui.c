@@ -707,21 +707,21 @@ static void render_send_page(SDL_Renderer *r, struct app_state *st)
     }
     y += 50;
 
-    /* Progress bar */
+    /* Progress bar — text above, bar below */
     if (st->send_running) {
         int bar_w = W - 40;
-        ui_draw_rect(r, 20, y, bar_w, 28, COLOR_SURFACE);
         if (st->send_progress_total > 0) {
             double pct = (double)st->send_progress_done / st->send_progress_total;
-            int fill_w = (int)(bar_w * pct);
-            if (fill_w > 0) ui_draw_rect(r, 20, y, fill_w, 28, COLOR_PROGRESS);
             char pbuf[128];
-            snprintf(pbuf, sizeof(pbuf), "%.0f%% (%lu / %lu bytes)",
+            snprintf(pbuf, sizeof(pbuf), "%.0f%%  %.1f / %.1f MB",
                      pct * 100.0,
-                     (unsigned long)st->send_progress_done,
-                     (unsigned long)st->send_progress_total);
-            int tw, th; ui_text_size(pbuf, &tw, &th);
-            ui_draw_text(r, pbuf, 20 + (bar_w - tw) / 2, y + 4, COLOR_TEXT);
+                     st->send_progress_done / (1024.0 * 1024.0),
+                     st->send_progress_total / (1024.0 * 1024.0));
+            ui_draw_text(r, pbuf, 20, y + 2, COLOR_TEXT);
+            y += 20;
+            int fill_w = (int)(bar_w * pct);
+            ui_draw_rect(r, 20, y, bar_w, 22, COLOR_SURFACE);
+            if (fill_w > 0) ui_draw_rect(r, 20, y, fill_w, 22, COLOR_PROGRESS);
         }
     }
 }
@@ -792,20 +792,21 @@ static void render_receive_page(SDL_Renderer *r, struct app_state *st)
     }
     y += 50;
 
+    /* Progress bar — text above, bar below */
     if (st->recv_running) {
         int bar_w = W - 40;
-        ui_draw_rect(r, 20, y, bar_w, 28, COLOR_SURFACE);
         if (st->recv_progress_total > 0) {
             double pct = (double)st->recv_progress_done / st->recv_progress_total;
-            int fill_w = (int)(bar_w * pct);
-            if (fill_w > 0) ui_draw_rect(r, 20, y, fill_w, 28, COLOR_PROGRESS);
             char pbuf[128];
-            snprintf(pbuf, sizeof(pbuf), "%.0f%% (%lu / %lu bytes)",
+            snprintf(pbuf, sizeof(pbuf), "%.0f%%  %.1f / %.1f MB",
                      pct * 100.0,
-                     (unsigned long)st->recv_progress_done,
-                     (unsigned long)st->recv_progress_total);
-            int tw, th; ui_text_size(pbuf, &tw, &th);
-            ui_draw_text(r, pbuf, 20 + (bar_w - tw) / 2, y + 4, COLOR_TEXT);
+                     st->recv_progress_done / (1024.0 * 1024.0),
+                     st->recv_progress_total / (1024.0 * 1024.0));
+            ui_draw_text(r, pbuf, 20, y + 2, COLOR_TEXT);
+            y += 20;
+            int fill_w = (int)(bar_w * pct);
+            ui_draw_rect(r, 20, y, bar_w, 22, COLOR_SURFACE);
+            if (fill_w > 0) ui_draw_rect(r, 20, y, fill_w, 22, COLOR_PROGRESS);
         }
     }
 }
