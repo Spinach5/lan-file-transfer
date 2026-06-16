@@ -1,0 +1,12 @@
+[requires]
+libwebsockets/4.3.6
+libarchive/3.7.7
+sdl/2.30.12
+sdl_ttf/2.22.0
+
+[generators]
+CMakeDeps
+CMakeToolchain
+
+[layout]
+cmake_layout
