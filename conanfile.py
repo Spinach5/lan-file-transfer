@@ -1,0 +1,26 @@
+from conan import ConanFile
+
+class MyProject(ConanFile):
+    # 1. 设置关键属性
+    settings = "os", "compiler", "build_type", "arch"
+    generators = "CMakeDeps", "CMakeToolchain"
+
+    # 2. 定义依赖（核心逻辑）
+    def requirements(self):
+        # 始终需要的依赖
+        self.requires("libwebsockets/4.3.5")
+        self.requires("libarchive/3.7.9")
+        
+        # 条件依赖：仅在非 Termux 环境下添加 SDL2
+        # 判断依据：如果 os 是 Linux 且 arch 是 armv8，则认为是 Termux（Android）环境
+        is_termux = (self.settings.os == "Linux" and self.settings.arch == "armv8")
+        
+        if not is_termux:
+            self.requires("sdl/2.30.1")  # 桌面环境用 Conan 管理 SDL2
+        # Termux 下不添加 SDL2，由系统包管理器（pkg）提供
+
+    # 3. 可选：为不同平台生成额外的配置信息
+    def generate(self):
+        # 如果有需要为 Termux 生成特殊的 CMake 配置，可以在这里写
+        # 但通常 CMakeDeps 和 CMakeToolchain 已经足够了
+        pass
