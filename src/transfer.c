@@ -444,7 +444,6 @@ static int tcp_send_file(struct net_context *nc, const char *filepath,
                 return -2;
             }
             sent += n;
-            log_write("[SEND] progress %lu/%lu\n", (unsigned long)sent, (unsigned long)total);
             push_progress(sent, total);
 
             /* Bandwidth throttling */
@@ -621,7 +620,6 @@ static void tcp_recv_file(struct net_context *nc, const char *savepath)
 
         fwrite(g_chunk_buf, 1, n, fp);
         received += n;
-        log_write("[RECV] progress %lu/%lu\n", (unsigned long)received, (unsigned long)meta.total_size);
         push_progress(received, meta.total_size);
     }
     fclose(fp);
