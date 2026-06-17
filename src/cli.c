@@ -36,26 +36,32 @@ static void cli_progress(uint64_t done, uint64_t total)
     cli_total = total;
     if (total == 0) return;
     int pct = (int)(done * 100 / total);
-    int bar_w = 30;
+    int bar_w = 20;  /* shorter bar to fit narrow terminals (Termux) */
     int filled = bar_w * pct / 100;
 
-    /* Write progress bar directly to stderr — \r keeps it on one line.
-       Must not go through log_write() which would add timestamps. */
-    fprintf(stderr, "\r  [");
+    /* \r = 回到行首, \033[K = 清到行尾, 确保原地刷新不残留 */
+    fprintf(stderr, "\r\033[K [");
     for (int i = 0; i < bar_w; i++)
         fputc(i < filled ? '=' : (i == filled ? '>' : ' '), stderr);
-    fprintf(stderr, "] %3d%%  ", pct);
+    fprintf(stderr, "] %3d%% ", pct);
 
+    /* 紧凑格式: 用最大单位显示, 保留 1 位小数 */
     const char *units[] = {"B","KB","MB","GB"};
-    int ui = 0; double ds = done;   while (ds >= 1024 && ui < 3) { ds /= 1024; ui++; }
-    int uj = 0; double ts = total;  while (ts >= 1024 && uj < 3) { ts /= 1024; uj++; }
-    fprintf(stderr, "%.1f%s / %.1f%s", ds, units[ui], ts, units[uj]);
+    int ui = 0; double ds = (double)done;
+    int uj = 0; double ts = (double)total;
+    while (ds >= 1024.0 && ui < 3) { ds /= 1024.0; ui++; }
+    while (ts >= 1024.0 && uj < 3) { ts /= 1024.0; uj++; }
+    /* 如果两边单位相同且 >= KB, 省略单位显示在被除数上 */
+    if (ui == uj && ui > 0)
+        fprintf(stderr, "%.1f/%.1f %s", ds, ts, units[ui]);
+    else
+        fprintf(stderr, "%.1f%s/%.1f%s", ds, units[ui], ts, units[uj]);
 
     uint64_t elapsed = now_ms() - cli_start_ms;
-    if (elapsed > 0) {
+    if (elapsed > 0 && done > 0) {
         double speed = (double)done / ((double)elapsed / 1000.0);
-        int sk = 0; while (speed >= 1024 && sk < 3) { speed /= 1024; sk++; }
-        fprintf(stderr, "  %.1f%s/s", speed, units[sk]);
+        int sk = 0; while (speed >= 1024.0 && sk < 3) { speed /= 1024.0; sk++; }
+        fprintf(stderr, " %.1f%s/s", speed, units[sk]);
     }
     fflush(stderr);
 }
@@ -522,7 +528,7 @@ int cli_main(int argc, char **argv)
                 }
             }
             tries++;
-            fprintf(stderr, "\r  Retrying... (%d/60)", tries);
+            fprintf(stderr, "\r\033[K  Retrying... (%d/60)", tries);
             fflush(stderr);
             sleep(1);
         }
