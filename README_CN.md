@@ -42,106 +42,141 @@ cmake .. -DBUILD_GUI=OFF
 
 ## 安装
 
-### Linux (Debian/Ubuntu)
+### 前置条件
+
+本项目使用 [Conan](https://conan.io/) 管理 C/C++ 依赖，请先安装 Conan：
 
 ```bash
-# 安装依赖
-sudo apt install -y build-essential cmake git \
-    libsdl2-dev libwebsockets-dev libarchive-dev
+# 安装 Conan（需要 Python 3.8+）如果因为权限问题无法安装,使用pipx安装
+pip install conan # 或者 pipx install conan
 
-# 克隆并构建（GUI）
+# 创建默认配置文件
+conan profile detect
+
+```
+
+> **Conan 官网**：[https://conan.io/](https://conan.io/) — 开源 C/C++ 包管理器。
+
+你还需要 C 编译器和 CMake：
+
+| 平台 | 安装命令 |
+|----------|---------|
+| Debian/Ubuntu | `sudo apt install -y build-essential cmake git` |
+| Fedora/RHEL | `sudo dnf install -y gcc cmake git` |
+| Arch | `sudo pacman -S --needed base-devel cmake git` |
+| macOS | `brew install cmake git`（Xcode CLT 提供编译器）|
+| Windows (MSYS2) | `pacman -S mingw-w64-ucrt-x86_64-{cmake,gcc,git}` |
+
+### 构建（全平台 — Conan 管理依赖）
+
+**第一步 — 安装依赖**（Conan 自动下载并构建所有库）：
+
+```bash
+git clone https://github.com/Spinach5/lanft.git
+cd lanft
+conan install . --build=missing --output-folder=build -s build_type=Release
+```
+
+此命令会自动拉取libwebsockets、libarchive、SDL3（以及 SDL3_ttf）。Conan 会自动检测你的平台；在 Termux/ARM 环境下会自动跳过 SDL3 和 SDL3_ttf。
+
+**第二步 — 生成构建系统**（使用 Conan 生成的 CMake 预设）：
+
+```bash
+# GUI 模式（桌面 Linux / macOS / Windows）：
+cmake --preset conan-release
+
+# 仅 CLI 模式（服务器、Termux，或任何无 SDL3 的环境）：
+cmake --preset conan-release -DBUILD_GUI=OFF
+```
+
+**第三步 — 编译：**
+
+```bash
+cmake --build build
+# 可执行文件位于：build/lanft
+```
+
+### 构建（不使用 Conan / 系统包管理器）
+
+如果你更习惯使用系统包管理器而非 Conan：
+
+<details>
+<summary>Linux (Debian/Ubuntu)</summary>
+
+```bash
+sudo apt install -y build-essential cmake git \
+    libsdl3-dev libsdl3-ttf-dev libwebsockets-dev libarchive-dev
+
 git clone https://github.com/Spinach5/lan-file-transfer.git lanft
 cd lanft && mkdir build && cd build
 cmake .. -DCMAKE_BUILD_TYPE=Release
 make -j$(nproc)
-
-# 仅 CLI（不需要 SDL3）
+# 仅 CLI：
 cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_GUI=OFF
 make -j$(nproc)
-
-# 安装到系统（可选）
-sudo cp lanft /usr/local/bin/
 ```
+</details>
 
-### Linux (Fedora/RHEL)
+<details>
+<summary>Linux (Fedora/RHEL)</summary>
 
 ```bash
 sudo dnf install -y gcc cmake git \
-    SDL3-devel libwebsockets-devel libarchive-devel
+    SDL3-devel SDL3_ttf-devel libwebsockets-devel libarchive-devel
 # 构建步骤同上
 ```
+</details>
 
-### Linux (Arch)
+<details>
+<summary>Linux (Arch)</summary>
 
 ```bash
 sudo pacman -S --needed base-devel cmake git \
-    sdl2 libwebsockets libarchive
+    sdl3 sdl3_ttf libwebsockets libarchive
 # 构建步骤同上
 ```
+</details>
 
-### Windows (MinGW-w64 + MSYS2)
-
-```bash
-# 安装依赖（MSYS2 UCRT64 终端）
-pacman -S mingw-w64-ucrt-x86_64-{cmake,make,gcc,git} \
-          mingw-w64-ucrt-x86_64-{SDL3,libwebsockets,libarchive}
-
-# 构建（GUI）
-git clone https://github.com/Spinach5/lan-file-transfer.git lanft
-cd lanft && mkdir build && cd build
-cmake .. -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release
-make -j$(nproc)
-
-# 仅 CLI（不需要 SDL3）
-cmake .. -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release -DBUILD_GUI=OFF
-make -j$(nproc)
-```
-
-### Windows (MSVC + vcpkg)
-
-```powershell
-# 安装依赖
-vcpkg install sdl2 libwebsockets libarchive
-
-# 构建（GUI）
-git clone https://github.com/Spinach5/lan-file-transfer.git lanft
-cd lanft && mkdir build && cd build
-cmake .. -DCMAKE_TOOLCHAIN_FILE=%VCPKG_ROOT%/scripts/buildsystems/vcpkg.cmake
-cmake --build . --config Release
-
-# 仅 CLI
-cmake .. -DBUILD_GUI=OFF -DCMAKE_TOOLCHAIN_FILE=%VCPKG_ROOT%/scripts/buildsystems/vcpkg.cmake
-cmake --build . --config Release
-```
-
-### macOS (Homebrew)
+<details>
+<summary>macOS (Homebrew)</summary>
 
 ```bash
-# 安装依赖
-brew install cmake sdl2 libwebsockets libarchive
-
-# 构建
-git clone https://github.com/Spinach5/lan-file-transfer.git lanft
-cd lanft && mkdir build && cd build
-cmake .. -DCMAKE_BUILD_TYPE=Release
-make -j$(nproc)
+brew install cmake sdl3 sdl3_ttf libwebsockets libarchive
+# 构建步骤同上
 ```
+</details>
 
-### Termux (Android)
+<details>
+<summary>Termux (Android) — 仅 CLI 模式</summary>
+
+Termux 不提供 SDL3 库，因此只支持 CLI 模式：
 
 ```bash
 pkg update && pkg upgrade
-pkg install cmake make clang git binutils \
-    sdl2 libwebsockets libarchive termux-x11
+pkg install cmake make clang git binutils python
 
-cd lanft && mkdir build && cd build
-cmake .. -DCMAKE_BUILD_TYPE=Release
-make -j$(nproc)
+# 安装 Conan
+pip install conan
 
-# 运行 GUI（需要 Termux:X11 应用）
-termux-x11 :0 &
-export DISPLAY=:0
-./lanft --gui
+cd lanft
+
+# 第一步：Conan 在 Termux 上自动跳过 SDL3/SDL3_ttf
+conan install . --build=missing --output-folder=build -s build_type=Release
+
+# 第二步：仅 CLI（无 SDL3）
+cmake --preset conan-release -DBUILD_GUI=OFF
+
+# 第三步：编译
+cmake --build build
+
+./build/lanft --help
+```
+</details>
+
+### 安装到系统（可选）
+
+```bash
+sudo cp build/lanft /usr/local/bin/
 ```
 
 ---

@@ -42,106 +42,140 @@ cmake .. -DBUILD_GUI=OFF
 
 ## Installation
 
-### Linux (Debian/Ubuntu)
+### Prerequisites
+
+This project uses [Conan](https://conan.io/) to manage C/C++ dependencies. Install Conan first:
 
 ```bash
-# Prerequisites
-sudo apt install -y build-essential cmake git \
-    libsdl2-dev libwebsockets-dev libarchive-dev
+# Install Conan (requires Python 3.8+) use pipx instead of pip if you encounter permission issues
+pip install conan # or pipx install conan
 
-# Build (GUI)
+# create a default profile
+conan profile detect
+```
+
+> **Conan official site**: [https://conan.io/](https://conan.io/) — The open source C/C++ package manager.
+
+You also need a C compiler and CMake:
+
+| Platform | Command |
+|----------|---------|
+| Debian/Ubuntu | `sudo apt install -y build-essential cmake git` |
+| Fedora/RHEL | `sudo dnf install -y gcc cmake git` |
+| Arch | `sudo pacman -S --needed base-devel cmake git` |
+| macOS | `brew install cmake git` (Xcode CLT provides compiler) |
+| Windows (MSYS2) | `pacman -S mingw-w64-ucrt-x86_64-{cmake,gcc,git}` |
+
+### Build (All Platforms — Conan Managed)
+
+**Step 1 — Install dependencies** (Conan downloads & builds all libraries):
+
+```bash
+git clone https://github.com/Spinach5/lanft.git
+cd lanft
+conan install . --build=missing --output-folder=build -s build_type=Release
+```
+
+This pullslibwebsockets、libarchive、SDL3（and SDL3_ttf）. Conan auto-detects your platform; on Termux/ARM it skips SDL3 and SDL3_ttf automatically.
+
+**Step 2 — Generate build system** (CMake preset from Conan):
+
+```bash
+# GUI mode (desktop Linux / macOS / Windows):
+cmake --preset conan-release
+
+# CLI-only mode (servers, Termux, or any platform without SDL3):
+cmake --preset conan-release -DBUILD_GUI=OFF
+```
+
+**Step 3 — Build:**
+
+```bash
+cmake --build build
+# The binary is at: build/lanft
+```
+
+### Build (Non-Conan / System Packages)
+
+If you prefer system package managers instead of Conan:
+
+<details>
+<summary>Linux (Debian/Ubuntu)</summary>
+
+```bash
+sudo apt install -y build-essential cmake git \
+    libsdl3-dev libsdl3-ttf-dev libwebsockets-dev libarchive-dev
+
 git clone https://github.com/Spinach5/lan-file-transfer.git lanft
 cd lanft && mkdir build && cd build
 cmake .. -DCMAKE_BUILD_TYPE=Release
 make -j$(nproc)
-
-# CLI-only
+# CLI-only:
 cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_GUI=OFF
 make -j$(nproc)
-
-# Install (optional)
-sudo cp lanft /usr/local/bin/
 ```
+</details>
 
-### Linux (Fedora/RHEL)
+<details>
+<summary>Linux (Fedora/RHEL)</summary>
 
 ```bash
 sudo dnf install -y gcc cmake git \
-    SDL3-devel libwebsockets-devel libarchive-devel
+    SDL3-devel SDL3_ttf-devel libwebsockets-devel libarchive-devel
 # Same build steps as Debian/Ubuntu
 ```
+</details>
 
-### Linux (Arch)
+<details>
+<summary>Linux (Arch)</summary>
 
 ```bash
 sudo pacman -S --needed base-devel cmake git \
-    sdl2 libwebsockets libarchive
+    sdl3 sdl3_ttf libwebsockets libarchive
 # Same build steps as above
 ```
+</details>
 
-### Windows (MinGW-w64 via MSYS2)
-
-```bash
-# Prerequisites (MSYS2 UCRT64 terminal)
-pacman -S mingw-w64-ucrt-x86_64-{cmake,make,gcc,git} \
-          mingw-w64-ucrt-x86_64-{SDL3,libwebsockets,libarchive}
-
-# Build (GUI)
-git clone https://github.com/Spinach5/lan-file-transfer.git lanft
-cd lanft && mkdir build && cd build
-cmake .. -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release
-make -j$(nproc)
-
-# CLI-only (no SDL3 needed)
-cmake .. -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release -DBUILD_GUI=OFF
-make -j$(nproc)
-```
-
-### Windows (MSVC + vcpkg)
-
-```powershell
-# Prerequisites
-vcpkg install sdl2 libwebsockets libarchive
-
-# Build (GUI)
-git clone https://github.com/Spinach5/lan-file-transfer.git lanft
-cd lanft && mkdir build && cd build
-cmake .. -DCMAKE_TOOLCHAIN_FILE=%VCPKG_ROOT%/scripts/buildsystems/vcpkg.cmake
-cmake --build . --config Release
-
-# CLI-only
-cmake .. -DBUILD_GUI=OFF -DCMAKE_TOOLCHAIN_FILE=%VCPKG_ROOT%/scripts/buildsystems/vcpkg.cmake
-cmake --build . --config Release
-```
-
-### macOS (Homebrew)
+<details>
+<summary>macOS (Homebrew)</summary>
 
 ```bash
-# Prerequisites
-brew install cmake sdl2 libwebsockets libarchive
-
-# Build
-git clone https://github.com/Spinach5/lan-file-transfer.git lanft
-cd lanft && mkdir build && cd build
-cmake .. -DCMAKE_BUILD_TYPE=Release
-make -j$(nproc)
+brew install cmake sdl3 sdl3_ttf libwebsockets libarchive
+# Same build steps as above
 ```
+</details>
 
-### Termux (Android)
+<details>
+<summary>Termux (Android) — CLI only</summary>
+
+Termux does not provide SDL3 libraries, so only CLI mode is supported:
 
 ```bash
 pkg update && pkg upgrade
-pkg install cmake make clang git binutils \
-    sdl2 libwebsockets libarchive termux-x11
+pkg install cmake make clang git binutils python
 
-cd lanft && mkdir build && cd build
-cmake .. -DCMAKE_BUILD_TYPE=Release
-make -j$(nproc)
+# Install Conan
+pip install conan
 
-# Run GUI (requires Termux:X11 app)
-termux-x11 :0 &
-export DISPLAY=:0
-./lanft --gui
+cd lanft
+
+# Step 1: Conan skips SDL3/SDL3_ttf on Termux automatically
+conan install . --build=missing --output-folder=build -s build_type=Release
+
+# Step 2: CLI-only (no SDL3)
+cmake --preset conan-release -DBUILD_GUI=OFF
+
+# Step 3: Build
+cmake --build build
+
+./build/lanft --help
+```
+</details>
+
+### Install Binary (Optional)
+
+```bash
+sudo cp build/lanft /usr/local/bin/
 ```
 
 ---
