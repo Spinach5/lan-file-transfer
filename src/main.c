@@ -314,7 +314,8 @@ int main(int argc, char **argv)
 
     /* ── GUI mode init ── */
 
-    if (SDL_InitSubSystem(SDL_INIT_VIDEO) != 0) {
+    /* SDL3: SDL_InitSubSystem 返回 bool（true=成功），用 ! 检测失败 */
+    if (!SDL_InitSubSystem(SDL_INIT_VIDEO)) {
         log_write("SDL_InitSubSystem: %s\n", SDL_GetError());
         return 1;
     }
@@ -404,7 +405,7 @@ int main(int argc, char **argv)
                 running = false;
                 break;
 
-            /* SDL3: SDL_WINDOWEVENT 已移除，窗口大小变更为独立事件类型 */
+            /* SDL3: SDL_EVENT_WINDOW 已移除，窗口大小变更为独立事件类型 */
             case SDL_EVENT_WINDOW_RESIZED:
                 state.window_w = event.window.data1;
                 state.window_h = event.window.data2;
