@@ -180,9 +180,6 @@ struct net_context *net_create(int mode)
     /* 初始化平台相关的套接字库（如 Windows 的 WSAStartup） */
     if (SOCKET_INIT() != 0) { free(nc); return NULL; }
 
-    /* 抑制 libwebsockets 内部日志，避免干扰 stderr 进度条 */
-    lws_set_log_level(0, NULL);
-
     /* 配置 libwebsockets 上下文创建信息 */
     struct lws_context_creation_info info;
     memset(&info, 0, sizeof(info));
