@@ -153,8 +153,10 @@ void log_write(const char *fmt, ...)
         char msgbuf[4096];
         vsnprintf(msgbuf, sizeof(msgbuf), fmt, ap);
 
-        fprintf(stderr, "%s", msgbuf);
-        fflush(stderr);
+        if (!g_mute_stderr) {
+            fprintf(stderr, "%s", msgbuf);
+            fflush(stderr);
+        }
 
         if (g_log_fp) {
             fprintf(g_log_fp, "[%s] %s", ts, msgbuf);
