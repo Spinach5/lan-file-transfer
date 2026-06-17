@@ -289,19 +289,28 @@ static void walk_and_add(struct archive *a, const char *disk_base, const char *a
     closedir(d);
 }
 
+static void get_tmp_path(char *buf, size_t bufsz)
+{
+#ifdef _WIN32
+    snprintf(buf, bufsz, "lanft_%d.tar.gz", (int)GetCurrentProcessId());
+#else
+    const char *tmpdir = getenv("TMPDIR");
+    if (!tmpdir || !tmpdir[0]) tmpdir = "/tmp";
+    snprintf(buf, bufsz, "%s/lanft_%d.tar.gz", tmpdir, (int)getpid());
+#endif
+}
+
 static char *compress_dir_to_tmp(const char *dirpath, uint64_t *out_size)
 {
     char tmpfile[256];
-#ifdef _WIN32
-    snprintf(tmpfile, sizeof(tmpfile), "lanft_%d.tar.gz", (int)GetCurrentProcessId());
-#else
-    snprintf(tmpfile, sizeof(tmpfile), "/tmp/lanft_%d.tar.gz", (int)getpid());
-#endif
+    get_tmp_path(tmpfile, sizeof(tmpfile));
 
     struct archive *a = archive_write_new();
     archive_write_add_filter_gzip(a);
     archive_write_set_format_pax_restricted(a);
     if (archive_write_open_filename(a, tmpfile) != ARCHIVE_OK) {
+        log_write("[PREPARE] archive_write_open_filename failed: %s\n",
+                  archive_error_string(a));
         archive_write_free(a);
         return NULL;
     }
@@ -982,18 +991,15 @@ char *transfer_prepare_send(const char *filepath, uint64_t *out_size)
     push_progress(0, 1);  /* signal "preparing" */
 
     char tmpfile[256];
-#ifdef _WIN32
-    snprintf(tmpfile, sizeof(tmpfile), "lanft_%d.tar.gz", (int)GetCurrentProcessId());
-#else
-    snprintf(tmpfile, sizeof(tmpfile), "/tmp/lanft_%d.tar.gz", (int)getpid());
-#endif
+    get_tmp_path(tmpfile, sizeof(tmpfile));
 
     struct archive *a = archive_write_new();
     archive_write_add_filter_gzip(a);
     archive_write_set_format_pax_restricted(a);
     if (archive_write_open_filename(a, tmpfile) != ARCHIVE_OK) {
+        log_write("[PREPARE] archive_write_open_filename(%s) failed: %s\n",
+                  tmpfile, archive_error_string(a));
         archive_write_free(a);
-        log_write("[PREPARE] failed to create archive\n");
         return NULL;
     }
 
@@ -1006,7 +1012,7 @@ char *transfer_prepare_send(const char *filepath, uint64_t *out_size)
 
     if (stat(tmpfile, &st) != 0) {
         unlink(tmpfile);
-        log_write("[PREPARE] archive stat failed\n");
+        log_write("[PREPARE] archive stat failed: %s\n", strerror(errno));
         return NULL;
     }
 
