@@ -298,16 +298,7 @@ int net_accept(struct net_context *nc)
         nc->sock_fd = accept(nc->listen_fd, (struct sockaddr *)&client, &len);
         if (nc->sock_fd == INVALID_FD) return -1;
 
-        /* 将接受的套接字交给 libwebsockets 作为原始描述符管理 */
-        lws_sock_file_fd_type fd;
-        fd.sockfd = nc->sock_fd;
-        nc->wsi = lws_adopt_descriptor_vhost(nc->vhost, LWS_ADOPT_RAW_FILE_DESC,
-                                              fd, "raw", NULL);
-        if (!nc->wsi) {
-            close_sock(nc->sock_fd);
-            nc->sock_fd = -1;
-            return -1;
-        }
+        /* TCP 走直接 I/O, 不交给 lws 管理 (避免 lws 抢占 socket 数据) */
         nc->connected = true;
         return 0;
     }
@@ -348,16 +339,7 @@ int net_connect(struct net_context *nc, const char *ip, int port)
         return -1;
     }
 
-    /* 将已连接套接字交给 libwebsockets 管理 */
-    lws_sock_file_fd_type fd;
-    fd.sockfd = nc->sock_fd;
-    nc->wsi = lws_adopt_descriptor_vhost(nc->vhost, LWS_ADOPT_RAW_FILE_DESC,
-                                          fd, "raw", NULL);
-    if (!nc->wsi) {
-        close_sock(nc->sock_fd);
-        nc->sock_fd = -1;
-        return -1;
-    }
+    /* TCP 走直接 I/O, 不交给 lws 管理 */
     nc->connected = true;
     return 0;
 }
