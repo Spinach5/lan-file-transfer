@@ -231,6 +231,30 @@ websocket/
 
 ## 使用方法
 
+### CLI 模式（默认）
+
+CLI 为默认模式 —— 不带 `--gui` 运行时默认进入命令行界面。
+
+```bash
+# 发送
+lanft --mode=S --address=192.168.1.100 ./report.pdf
+lanft -S -p 1234 ./video.mp4
+lanft --protocol=UDP --mode=S --address=10.0.0.5 -p 5555 /home/user/docs/
+
+# 接收
+lanft --mode=R ./downloads/
+lanft -R -p 5555 ./received/
+lanft --mode=R --address=10.84.183.2 -p 5555 ./received/
+
+# 使用自定义配置文件
+lanft --profile=/path/to/config.toml --mode=R ./downloads/
+
+# 信息
+lanft --help
+lanft --version
+lanft --history
+```
+
 ### GUI 模式
 
 ```bash
@@ -251,30 +275,6 @@ websocket/
 2. 发送端：Send File → 选择文件 → 输入接收端 IP → Start Send
 3. 两端显示进度条；完成后记录到 History
 
-### CLI 模式（默认）
-
-CLI 为默认模式，无需额外参数。
-
-```bash
-# 发送
-lanft --mode=S --address=192.168.1.100 ./report.pdf
-lanft -S -p 1234 ./video.mp4
-lanft --protocol=UDP --mode=S --address=10.0.0.5 -p 5555 /home/user/docs/
-
-# 接收
-lanft --mode=R ./downloads/
-lanft -R -p 5555 ./received/
-lanft --mode=R --address=10.84.183.2 -p 5555 ./received/
-
-# 启动 GUI
-lanft --gui
-
-# 信息
-lanft --help
-lanft --version
-lanft --history
-```
-
 ### 参数参考
 
 | 短选项 | 长选项 | 默认值 | 说明 |
@@ -288,6 +288,7 @@ lanft --history
 | | `--protocol=TCP\|UDP` | TCP | 传输协议 |
 | `-p` | `--port=NUM` | 9876 | 端口号 |
 | | `--address=IP` | `0.0.0.0` | 发送：接收端 IP。接收：监听 IP |
+| | `--profile=PATH` | — | 指定配置文件（`--config` 的别名） |
 | | `--history` | — | 打印历史记录 |
 
 ---

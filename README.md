@@ -243,6 +243,30 @@ websocket/
 
 ## Usage
 
+### CLI Mode (default)
+
+CLI is the default mode — running `lanft` with no `--gui` flag starts the command-line interface.
+
+```bash
+# Send
+lanft --mode=S --address=192.168.1.100 ./report.pdf
+lanft -S -p 1234 ./video.mp4
+lanft --protocol=UDP --mode=S --address=10.0.0.5 -p 5555 /home/user/docs/
+
+# Receive
+lanft --mode=R ./downloads/
+lanft -R -p 5555 ./received/
+lanft --mode=R --address=10.84.183.2 -p 5555 ./received/
+
+# Use custom config profile
+lanft --profile=/path/to/config.toml --mode=R ./downloads/
+
+# Info
+lanft --help
+lanft --version
+lanft --history
+```
+
 ### GUI Mode
 
 ```bash
@@ -263,30 +287,6 @@ Opens SDL3 window with four tabs:
 2. Sender: Send File → Browse file → enter receiver IP → Start Send
 3. Both sides show progress bar; completion logged to History
 
-### CLI Mode (default)
-
-CLI is the default mode — no flags needed.
-
-```bash
-# Send
-lanft --mode=S --address=192.168.1.100 ./report.pdf
-lanft -S -p 1234 ./video.mp4
-lanft --protocol=UDP --mode=S --address=10.0.0.5 -p 5555 /home/user/docs/
-
-# Receive
-lanft --mode=R ./downloads/
-lanft -R -p 5555 ./received/
-lanft --mode=R --address=10.84.183.2 -p 5555 ./received/
-
-# GUI
-lanft --gui
-
-# Info
-lanft --help
-lanft --version
-lanft --history
-```
-
 ### Options
 
 | Short | Long | Default | Description |
@@ -300,6 +300,7 @@ lanft --history
 | | `--protocol=TCP\|UDP` | TCP | Transport protocol |
 | `-p` | `--port=NUM` | 9876 | Port number |
 | | `--address=IP` | `0.0.0.0` | Send: receiver IP. Recv: listen IP |
+| | `--profile=PATH` | — | Use custom config file (alias for `--config`) |
 | | `--history` | — | Print history table |
 
 ---

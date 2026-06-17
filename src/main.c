@@ -297,10 +297,9 @@ static int gui_accept_cb(const char *ip, const char *hostname,
 int main(int argc, char **argv)
 {
     /* Determine mode:
-       - No arguments (double-click / plain ./lanft) → GUI
        - --gui flag → GUI
-       - Anything else → CLI */
-    bool gui_mode = (argc <= 1);
+       - Default (no --gui) → CLI */
+    bool gui_mode = false;
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--gui") == 0) {
             gui_mode = true;

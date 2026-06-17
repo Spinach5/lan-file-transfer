@@ -1,0 +1,13 @@
+[Unit]
+Description=LAN File Transfer Daemon (User Service)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/lanft
+Restart=on-failure
+RestartSec=5
+
+
+[Install]
+WantedBy=default.target

@@ -16,9 +16,6 @@ license: "MIT"
 
 # ── Dependencies ──────────────────────────────────────────────
 depends:
-   - libwebsockets-dev
-   - libarchive-dev
-   - libsdl2-dev
 
 recommends:
   - git
@@ -32,6 +29,11 @@ contents:
     file_info:
       mode: 0755
 
+  - src: "./lanft.service"
+    dst: "/usr/lib/systemd/user/lanft.service"
+    file_info:
+      mode: 0644
+
   # System config (installed to /etc/lanft/config.toml)
   # type: config means dpkg/rpm will not overwrite user changes on upgrade
   - src: "./default.toml"
@@ -43,6 +45,7 @@ contents:
     type: "dir"
     file_info:
       mode: 0755
+  
 
 # ── Scripts ───────────────────────────────────────────────────
 # Create log dir with sticky permissions on install

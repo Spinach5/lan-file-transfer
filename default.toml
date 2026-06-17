@@ -1,0 +1,32 @@
+# lanft system-level default configuration
+# Installed to /etc/lanft/config.toml by package manager
+# User overrides go to ~/.config/lanft/config.toml
+
+# ── Core ──────────────────────────────────────────────────────
+port = 9876
+protocol = "TCP"
+address = "0.0.0.0"
+save_dir = "~/Downloads"
+mode = "R"
+
+# ── Advanced ──────────────────────────────────────────────────
+buffer_size = 65536
+timeout_seconds = 30
+max_connections = 5
+auto_accept = false
+overwrite_policy = "rename" # "rename", "overwrite", "skip"
+show_progress = true
+
+# ── Discovery ─────────────────────────────────────────────────
+discovery_enabled = true
+discovery_interval = 5
+discovery_ttl = 1
+
+# ── Logging ───────────────────────────────────────────────────
+log_level = "info" # "debug", "info", "warn", "error
+# Log directory. Files are named YYYYMMDD-level.log, e.g. 20250614-info.log
+# Set to empty string to log to stderr only.
+log_file = "/var/log/lanft/"
+
+# ── Bandwidth ─────────────────────────────────────────────────
+send_bandwidth_limit = 0

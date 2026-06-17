@@ -115,7 +115,7 @@ static int cli_accept_cb(const char *ip, const char *hostname,
 static void print_help(const char *prog)
 {
     printf("Usage: %s [OPTIONS] PATH\n\n", prog);
-    printf("LAN file transfer tool — run without arguments to launch GUI\n\n");
+    printf("LAN file transfer tool — default CLI mode, use --gui for graphical mode\n\n");
     printf("Options:\n");
     printf("  --gui                 Launch SDL3 GUI (graphical mode)\n");
     printf("  -h, --help            Show this help\n");
@@ -142,6 +142,7 @@ static void print_help(const char *prog)
     printf("  --no-auto-accept      Prompt before accepting (default)\n");
     printf("  --show-config         Print effective config and exit\n");
     printf("  --save-config         Save current settings to user config\n");
+    printf("  --profile=PATH        Use custom config file (alias for --config)\n");
     printf("  --config=PATH         Use custom config file\n\n");
     printf("Examples:\n");
     printf("  Send:   %s --mode=S --address=192.168.1.100 ./file.pdf\n", prog);
@@ -187,6 +188,7 @@ int cli_main(int argc, char **argv)
         {"no-auto-accept", no_argument,       0, 2011},
         {"scan",           no_argument,       0, 2014},
         {"log-file",       required_argument, 0, 2013},
+        {"profile",        required_argument, 0, 2012},
         {"config",         required_argument, 0, 2012},
         {0, 0, 0, 0}
     };
@@ -432,9 +434,9 @@ int cli_main(int argc, char **argv)
 
     /* --- Validation ------------------------------------------------------------ */
     if (cfg.mode < 0) {
-        log_write("Error: --mode is required (S=send, R=receive)\n\n");
+        /* No mode set in config and not on command line — show help */
         print_help(argv[0]);
-        return 1;
+        return 0;
     }
 
     /* Determine the path: CLI positional arg takes priority.
@@ -449,9 +451,10 @@ int cli_main(int argc, char **argv)
 
     struct stat path_st;
     if (cfg.mode == 0) {
-        /* Send: positional arg is required */
+        /* Send: require a path argument */
         if (optind >= argc) {
-            log_write("Error: missing PATH argument\n\n");
+            log_write("Please specify a file or directory to send.\n\n");
+            log_write("Usage: %s --mode=S --address=<IP> <file-or-dir>\n\n", argv[0]);
             print_help(argv[0]);
             return 1;
         }
