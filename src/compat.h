@@ -2,10 +2,10 @@
 #ifndef COMPAT_H
 #define COMPAT_H
 
-#if defined(_WIN32) || defined(_WIN64)
-
-/* ── pthread → Win32 (MSVC) ──────────────────────────── */
+/* ── pthread (MSVC→Win32 wrappers, others→<pthread.h>) ── */
 #include "compat_threads.h"
+
+#if defined(_WIN32) || defined(_WIN64)
 
 /* ── getopt_long (MSVC) ───────────────────────────────── */
 #ifndef __GNUC__
@@ -59,7 +59,10 @@
    expects mkdir(path, mode). Wrap to discard the unused mode. */
 static inline int compat_mkdir(const char *p, int mode) { (void)mode; return _mkdir(p); }
 #define mkdir(p,m)  compat_mkdir(p,m)
-/* localtime_r → localtime_s (note: Windows reverses the argument order) */
+#endif
+
+/* localtime_r → localtime_s (Windows reverses argument order) */
+#ifdef _WIN32
 #define localtime_r(t, tm)  localtime_s(tm, t)
 #endif
 

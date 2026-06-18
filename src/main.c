@@ -13,9 +13,6 @@
 #include <stdlib.h>     /* 标准库（内存分配等） */
 #include <string.h>     /* 字符串操作 */
 #include <time.h>       /* 时间函数 */
-#include <sys/time.h>   /* gettimeofday */
-#include <unistd.h>     /* usleep, 其他POSIX函数 */
-#include <pthread.h>    /* 多线程（发送/接收工作线程） */
 #include <SDL3/SDL.h>   /* SDL2图形库 */
 
 /* ═══════════════════════════════════════════════════════════

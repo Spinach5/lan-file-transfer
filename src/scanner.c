@@ -6,7 +6,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <pthread.h>
 #include <stdatomic.h>
 #include <errno.h>
 #include <stdbool.h>
@@ -15,7 +14,9 @@
 #include <iphlpapi.h>
 #pragma comment(lib, "iphlpapi.lib")
 #else
+#ifndef _WIN32
 #include <ifaddrs.h>
+#endif
 #endif
 
 #ifdef BUILD_GUI

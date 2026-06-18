@@ -14,7 +14,9 @@
 #ifdef _WIN32
 #include <iphlpapi.h>
 #else
+#ifndef _WIN32
 #include <ifaddrs.h>
+#endif
 #endif
 
 #define CLI_VERSION "lanft v1.0"

@@ -1,3 +1,6 @@
+#ifndef _MSC_VER
+#include <unistd.h>
+#endif
 #include "transfer.h"
 #include "network.h"
 #include "protocol.h"
@@ -10,10 +13,10 @@
 #include <stdint.h>
 #include <stdarg.h>
 #include <errno.h>
-#include <unistd.h>
-#include <sys/stat.h>
-#include <fcntl.h>
+#ifndef _WIN32
 #include <dirent.h>
+#endif
+#include <sys/stat.h>
 #include <archive.h>
 #include <archive_entry.h>
 #ifdef BUILD_GUI

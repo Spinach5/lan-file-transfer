@@ -1,6 +1,6 @@
 /* getopt_long() implementation for MSVC.
    Based on public-domain musl getopt, extended with long option support. */
-#ifdef _MSC_VER
+#if defined(_WIN32) && !defined(__GNUC__)
 
 #include "compat_getopt.h"
 #include <string.h>
@@ -101,4 +101,4 @@ int getopt_long(int argc, char *const argv[], const char *optstring,
 
     return -1;
 }
-#endif /* _MSC_VER */
+#endif /* _WIN32 && !__GNUC__ */

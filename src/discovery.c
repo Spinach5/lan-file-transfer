@@ -11,11 +11,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <pthread.h>
 #ifdef _WIN32
 #include <iphlpapi.h>
 #else
+#ifndef _WIN32
 #include <ifaddrs.h>
+#endif
 #endif
 
 static volatile bool g_disc_running = false;

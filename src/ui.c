@@ -9,7 +9,6 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
-#include <pthread.h>
 #include <SDL3/SDL.h>
 #ifdef HAVE_SDL3_TTF
 #include <SDL3_ttf/SDL_ttf.h>

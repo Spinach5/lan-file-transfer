@@ -1,3 +1,6 @@
+#ifndef _MSC_VER
+#include <unistd.h>
+#endif
 #include "config.h"
 #include "compat.h"
 #include "log.h"
@@ -13,7 +16,6 @@
 #ifdef _WIN32
 #include <shlobj.h>
 #else
-#include <unistd.h>
 #include <pwd.h>
 #endif
 

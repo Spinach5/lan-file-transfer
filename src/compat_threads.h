@@ -1,10 +1,12 @@
 /* pthread → Win32 threads compat layer for MSVC.
    On MinGW (__GNUC__), native pthread.h is used.
-   On MSVC (_MSC_VER), Windows threads are wrapped. */
+   On MSVC (_MSC_VER), Windows threads are wrapped.
+   On Linux/macOS, native pthread.h is used. */
 #ifndef COMPAT_THREADS_H
 #define COMPAT_THREADS_H
 
-#ifdef _MSC_VER
+#if defined(_WIN32) && !defined(__GNUC__)
+/* ── MSVC: Win32 thread wrappers ───────────────────────── */
 
 #include <windows.h>
 #include <process.h>
@@ -57,7 +59,8 @@ static inline int pthread_join(pthread_t thread, void **retval)
 }
 
 #else
+/* ── MinGW / Linux / macOS: native pthread ─────────────── */
 #include <pthread.h>
-#endif /* _MSC_VER */
+#endif
 
 #endif /* COMPAT_THREADS_H */
