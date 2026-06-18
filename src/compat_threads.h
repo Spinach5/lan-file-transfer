@@ -8,6 +8,7 @@
 #if defined(_WIN32) && !defined(__GNUC__)
 /* ── MSVC: Win32 thread wrappers ───────────────────────── */
 
+#include <stdlib.h>
 #include <windows.h>
 #include <process.h>
 

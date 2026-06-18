@@ -123,6 +123,11 @@ static inline int sock_set_nonblock(socket_t fd) {
     return ioctlsocket(fd, FIONBIO, &mode);
 }
 
+/* MSVC needs ssize_t before the inline socket I/O functions below */
+#ifndef __GNUC__
+#define ssize_t  SSIZE_T
+#endif
+
 /* Portable socket close (closesocket on Win, close on POSIX) */
 static inline int close_sock(socket_t fd) {
     return closesocket(fd);
@@ -147,9 +152,8 @@ static inline ssize_t sock_read(socket_t fd, void *buf, size_t len) {
     return (ssize_t)recv(fd, (char *)buf, (int)len, 0);
 }
 
-/* Missing POSIX types and macros (MSVC only — MinGW provides them) */
+/* Missing POSIX macros (MSVC only) */
 #ifndef __GNUC__
-#define ssize_t SSIZE_T
 #define strdup  _strdup
 #ifndef S_ISDIR
 #define S_ISDIR(m)  (((m) & _S_IFMT) == _S_IFDIR)
